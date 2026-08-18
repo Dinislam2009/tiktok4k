@@ -7,6 +7,7 @@ import type { VideoMetadata } from "./types.js";
 export interface QualityMetrics {
   ssim: number | null;
   psnr: number | null;
+  vmaf: number | null;
   note: string;
 }
 
@@ -33,23 +34,35 @@ const TARGET_FPS = 30;
 const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
 
+// These are deliberately quality-oriented thresholds. They are not used as a
+// replacement for the technical checks below; they prevent a technically valid
+// encode from being reported as a quality success when the visual comparison
+// is materially degraded.
+const MIN_SSIM = 0.99;
+const MIN_PSNR_DB = 40;
+const MIN_VMAF = 90;
+
 function getBinary(): string {
   const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
   if (!existsSync(executable)) throw new Error(`FFmpeg binary not found: ${executable}`);
   return executable;
 }
 
-function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
+function parseMetric(stderr: string, name: "SSIM" | "PSNR" | "VMAF"): number | null {
   const patterns = name === "SSIM"
     ? [
-        /SSIM.*?All:\s*([0-9.]+)/i,
+        /SSIM\s+Y:[^\n]*?All:\s*([0-9.]+)/i,
         /All:\s*([0-9.]+)/i,
       ]
-    : [
-        /PSNR.*?average:\s*([0-9.]+)/i,
-        /PSNR average:\s*([0-9.]+)/i,
-        /PSNR y:\s*([0-9.]+)/i,
-      ];
+    : name === "PSNR"
+      ? [
+          /PSNR\s+y:[^\n]*?average:\s*([0-9.]+)/i,
+          /PSNR[^\n]*?average:\s*([0-9.]+)/i,
+        ]
+      : [
+          /VMAF score:\s*([0-9.]+)/i,
+          /VMAF[^\n]*?score[^0-9]*([0-9.]+)/i,
+        ];
 
   for (const pattern of patterns) {
     const match = stderr.match(pattern);
@@ -62,18 +75,31 @@ function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
   return null;
 }
 
-async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
+const cropFilter =
+  `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1`;
+
+function buildReferenceFilter(): string {
+  // Both sides must have the same frame rate and timebase. The rendered MP4
+  // normally has a 1/15360 timebase while the source commonly has 1/30000;
+  // comparing those directly makes FFmpeg warn that results may be incorrect.
+  return [
+    `[0:v]${cropFilter},fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[reference]`,
+    `[1:v]fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[encoded]`,
+  ].join(";");
+}
+
+async function runMetric(
+  sourcePath: string,
+  outputPath: string,
+  metric: "ssim" | "psnr" | "libvmaf",
+): Promise<{ value: number | null; stderr: string; code: number | null }> {
   const ffmpeg = getBinary();
-  const cropFilter =
-    "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,setsar=1";
-
+  const metricLabel = metric === "ssim" ? "ssim_result" : metric === "psnr" ? "psnr_result" : "vmaf_result";
   const filter =
-    `[0:v]${cropFilter},setpts=PTS-STARTPTS[source];` +
-    `[1:v]setpts=PTS-STARTPTS[encoded];` +
-    `[source][encoded]ssim=stats_file=-[ssim];` +
-    `[source][encoded]psnr=stats_file=-[psnr]`;
+    `${buildReferenceFilter()};` +
+    `[reference][encoded]${metric === "libvmaf" ? "libvmaf" : metric}=stats_file=-[${metricLabel}]`;
 
-  return await new Promise<QualityMetrics>((resolve) => {
+  return await new Promise((resolve) => {
     const child = spawn(
       ffmpeg,
       [
@@ -81,8 +107,7 @@ async function measureQuality(sourcePath: string, outputPath: string): Promise<Q
         "-i", sourcePath,
         "-i", outputPath,
         "-filter_complex", filter,
-        "-map", "[ssim]",
-        "-map", "[psnr]",
+        "-map", `[${metricLabel}]`,
         "-f", "null",
         "-",
       ],
@@ -93,33 +118,46 @@ async function measureQuality(sourcePath: string, outputPath: string): Promise<Q
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
-      if (stderr.length > 200000) stderr = stderr.slice(-200000);
+      if (stderr.length > 300000) stderr = stderr.slice(-300000);
     });
-    child.on("error", () => {
-      resolve({ ssim: null, psnr: null, note: "Quality metrics could not be started." });
-    });
+    child.on("error", () => resolve({ value: null, stderr, code: null }));
     child.on("close", (code) => {
-      const ssim = parseMetric(stderr, "SSIM");
-      const psnr = parseMetric(stderr, "PSNR");
-
-      if (ssim !== null && psnr !== null) {
-        resolve({
-          ssim,
-          psnr,
-          note: "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform.",
-        });
-        return;
-      }
-
       resolve({
-        ssim,
-        psnr,
-        note: code === 0
-          ? "FFmpeg completed, but its SSIM/PSNR log format was not recognized."
-          : `FFmpeg quality comparison failed with exit code ${code}.`,
+        value: parseMetric(stderr, metric === "libvmaf" ? "VMAF" : metric === "ssim" ? "SSIM" : "PSNR"),
+        stderr,
+        code,
       });
     });
   });
+}
+
+async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
+  const [ssimResult, psnrResult, vmafResult] = await Promise.all([
+    runMetric(sourcePath, outputPath, "ssim"),
+    runMetric(sourcePath, outputPath, "psnr"),
+    runMetric(sourcePath, outputPath, "libvmaf"),
+  ]);
+
+  const successful: string[] = [];
+  if (ssimResult.value !== null) successful.push(`SSIM ${ssimResult.value.toFixed(6)}`);
+  if (psnrResult.value !== null) successful.push(`PSNR ${psnrResult.value.toFixed(3)} dB`);
+  if (vmafResult.value !== null) successful.push(`VMAF ${vmafResult.value.toFixed(3)}`);
+
+  const failures: string[] = [];
+  if (ssimResult.value === null) failures.push(`SSIM (exit ${ssimResult.code ?? "error"})`);
+  if (psnrResult.value === null) failures.push(`PSNR (exit ${psnrResult.code ?? "error"})`);
+  if (vmafResult.value === null) failures.push(`VMAF (exit ${vmafResult.code ?? "error"})`);
+
+  let note = "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform, with both streams normalized to 30 fps and a 1/30 timebase.";
+  if (successful.length > 0) note += ` ${successful.join("; ")}.`;
+  if (failures.length > 0) note += ` Could not parse: ${failures.join(", ")}.`;
+
+  return {
+    ssim: ssimResult.value,
+    psnr: psnrResult.value,
+    vmaf: vmafResult.value,
+    note,
+  };
 }
 
 export async function validateOutput(
@@ -176,6 +214,24 @@ export async function validateOutput(
   }
 
   const metrics = await measureQuality(sourcePath, outputPath);
+
+  if (metrics.ssim === null) {
+    warnings.push("SSIM could not be measured.");
+  } else if (metrics.ssim < MIN_SSIM) {
+    warnings.push(`SSIM quality is below the minimum threshold: ${metrics.ssim.toFixed(6)} < ${MIN_SSIM}.`);
+  }
+
+  if (metrics.psnr === null) {
+    warnings.push("PSNR could not be measured.");
+  } else if (metrics.psnr < MIN_PSNR_DB) {
+    warnings.push(`PSNR quality is below the minimum threshold: ${metrics.psnr.toFixed(3)} dB < ${MIN_PSNR_DB} dB.`);
+  }
+
+  if (metrics.vmaf === null) {
+    warnings.push("VMAF could not be measured.");
+  } else if (metrics.vmaf < MIN_VMAF) {
+    warnings.push(`VMAF quality is below the minimum threshold: ${metrics.vmaf.toFixed(3)} < ${MIN_VMAF}.`);
+  }
 
   return {
     source,
