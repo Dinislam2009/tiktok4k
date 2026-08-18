@@ -4,7 +4,8 @@
   "description": "Social Video Quality Optimizer",
   "main": "dist/index.js",
   "scripts": {
-    "analyze": "tsx src/test-analyzer.ts"
+    "analyze": "tsx src/test-analyzer.ts",
+    "render": "tsx src/test-renderer.ts"
   },
   "keywords": ["video", "ffmpeg", "tiktok", "instagram"],
   "author": "Dinislam2009",
