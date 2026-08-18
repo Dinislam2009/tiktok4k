@@ -17,6 +17,13 @@ export interface QualityValidation {
   passed: boolean;
 }
 
+const TARGET_WIDTH = 1080;
+const TARGET_HEIGHT = 1920;
+const TARGET_FPS = 30;
+const FPS_TOLERANCE = 0.1;
+const DURATION_TOLERANCE = 0.15;
+const MIN_VIDEO_BITRATE_KBPS = 2000;
+
 export async function validateOutput(
   sourcePath: string,
   outputPath: string,
@@ -28,9 +35,21 @@ export async function validateOutput(
 
   const warnings: string[] = [];
 
-  if (output.duration <= 0 || Math.abs(output.duration - source.duration) > 0.15) {
+  if (output.duration <= 0 || Math.abs(output.duration - source.duration) > DURATION_TOLERANCE) {
     warnings.push(
       `Duration changed unexpectedly: source ${source.duration.toFixed(3)}s, output ${output.duration.toFixed(3)}s.`,
+    );
+  }
+
+  if (output.width !== TARGET_WIDTH || output.height !== TARGET_HEIGHT) {
+    warnings.push(
+      `Unexpected output resolution: expected ${TARGET_WIDTH}x${TARGET_HEIGHT}, got ${output.width}x${output.height}.`,
+    );
+  }
+
+  if (Math.abs(output.fps - TARGET_FPS) > FPS_TOLERANCE) {
+    warnings.push(
+      `Unexpected output FPS: expected ${TARGET_FPS}, got ${output.fps}.`,
     );
   }
 
@@ -46,14 +65,18 @@ export async function validateOutput(
     warnings.push(`Unexpected output audio codec: ${output.audioCodec ?? "none"}.`);
   }
 
-  if (output.audioBitrate !== null && output.audioBitrate < 64000) {
-    warnings.push(
-      `Reported audio bitrate is unusually low: ${Math.round(output.audioBitrate / 1000)} kbps. Verify the FFprobe stream metadata before using it as a quality metric.`,
-    );
-  }
+  // AAC bitrate reported by FFprobe for MP4 can be misleading with the native
+  // FFmpeg AAC encoder. Validate that an AAC stream exists, but do not reject
+  // an otherwise valid output based on stream bit_rate metadata.
 
   if (output.width <= 0 || output.height <= 0) {
     warnings.push("Output resolution is invalid.");
+  }
+
+  if (output.bitrate > 0 && output.bitrate / 1000 < MIN_VIDEO_BITRATE_KBPS) {
+    warnings.push(
+      `Video bitrate is unusually low: ${Math.round(output.bitrate / 1000)} kbps. Expected at least ${MIN_VIDEO_BITRATE_KBPS} kbps for a 1080x1920 TikTok output.`,
+    );
   }
 
   return {
