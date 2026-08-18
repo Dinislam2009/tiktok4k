@@ -24,6 +24,7 @@ export interface OptimizationPlan {
     codec: VideoCodec;
     pixelFormat: "yuv420p";
     crf: number;
+    videoBitrateKbps: number;
     maxVideoBitrateKbps: number;
     bufferSizeKbps: number;
     audioBitrateKbps: number;
@@ -44,11 +45,18 @@ function clamp(value: number, min: number, max: number): number {
 
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
-  const baseBitrate = quality === "quality" ? 12000 : quality === "size" ? 6000 : 8500;
+  const baseBitrate = quality === "quality" ? 8000 : quality === "size" ? 3000 : 5000;
+  const maxBitrate = quality === "quality" ? 12000 : quality === "size" ? 6000 : 8500;
   const crfBase = quality === "quality" ? 18 : quality === "size" ? 24 : 21;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
-  const maxVideoBitrateKbps = Math.round(baseBitrate * frameFactor);
-  return { crf, maxVideoBitrateKbps, bufferSizeKbps: maxVideoBitrateKbps * 2 };
+  const videoBitrateKbps = Math.round(baseBitrate * frameFactor);
+  const maxVideoBitrateKbps = Math.round(maxBitrate * frameFactor);
+  return {
+    crf,
+    videoBitrateKbps,
+    maxVideoBitrateKbps,
+    bufferSizeKbps: maxVideoBitrateKbps * 2,
+  };
 }
 
 function buildFilter(sourceWidth: number, sourceHeight: number, framing: FramingMode) {
@@ -113,6 +121,7 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       codec,
       pixelFormat: "yuv420p",
       crf: encoding.crf,
+      videoBitrateKbps: encoding.videoBitrateKbps,
       maxVideoBitrateKbps: encoding.maxVideoBitrateKbps,
       bufferSizeKbps: encoding.bufferSizeKbps,
       audioBitrateKbps: request.quality === "size" ? 128 : 192,
