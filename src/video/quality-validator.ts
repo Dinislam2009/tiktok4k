@@ -35,7 +35,6 @@ const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
 const MIN_SSIM = 0.99;
 const MIN_PSNR_DB = 40;
-const MIN_VMAF = 90;
 
 function getBinary(): string {
   const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
@@ -43,21 +42,16 @@ function getBinary(): string {
   return executable;
 }
 
-function parseMetric(stderr: string, name: "SSIM" | "PSNR" | "VMAF"): number | null {
+function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
   const patterns = name === "SSIM"
     ? [
         /SSIM\s+Y:[^\n]*?All:\s*([0-9.]+)/i,
         /All:\s*([0-9.]+)/i,
       ]
-    : name === "PSNR"
-      ? [
-          /PSNR\s+y:[^\n]*?average:\s*([0-9.]+)/i,
-          /PSNR[^\n]*?average:\s*([0-9.]+)/i,
-        ]
-      : [
-          /VMAF score:\s*([0-9.]+)/i,
-          /VMAF[^\n]*?score[^0-9]*([0-9.]+)/i,
-        ];
+    : [
+        /PSNR\s+y:[^\n]*?average:\s*([0-9.]+)/i,
+        /PSNR[^\n]*?average:\s*([0-9.]+)/i,
+      ];
 
   for (const pattern of patterns) {
     const match = stderr.match(pattern);
@@ -83,24 +77,22 @@ function buildReferenceFilter(): string {
 async function runMetric(
   sourcePath: string,
   outputPath: string,
-  metric: "ssim" | "psnr" | "libvmaf",
-): Promise<{ value: number | null; stderr: string; code: number | null }> {
+  metric: "ssim" | "psnr",
+): Promise<{ value: number | null; code: number | null }> {
   const ffmpeg = getBinary();
-  const metricLabel = metric === "ssim" ? "ssim_result" : metric === "psnr" ? "psnr_result" : "vmaf_result";
-  const metricFilter = metric === "libvmaf" ? "libvmaf" : `${metric}=stats_file=-`;
-  const filter = `${buildReferenceFilter()};[reference][encoded]${metricFilter}[${metricLabel}]`;
+  const filter = `${buildReferenceFilter()};[reference][encoded]${metric}=stats_file=-`;
 
   return await new Promise((resolve) => {
     const child = spawn(
       ffmpeg,
       [
         "-hide_banner",
+        "-nostdin",
         "-i", sourcePath,
         "-i", outputPath,
         "-filter_complex", filter,
-        "-map", `[${metricLabel}]`,
         "-f", "null",
-        "-",
+        "NUL",
       ],
       { windowsHide: true },
     );
@@ -111,11 +103,10 @@ async function runMetric(
       stderr += chunk;
       if (stderr.length > 300000) stderr = stderr.slice(-300000);
     });
-    child.on("error", () => resolve({ value: null, stderr, code: null }));
+    child.on("error", () => resolve({ value: null, code: null }));
     child.on("close", (code) => {
       resolve({
-        value: parseMetric(stderr, metric === "libvmaf" ? "VMAF" : metric === "ssim" ? "SSIM" : "PSNR"),
-        stderr,
+        value: parseMetric(stderr, metric === "ssim" ? "SSIM" : "PSNR"),
         code,
       });
     });
@@ -123,30 +114,29 @@ async function runMetric(
 }
 
 async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
-  // Run sequentially. VMAF is substantially heavier than SSIM/PSNR, and
-  // running all three at once needlessly competes for CPU and memory.
+  // SSIM and PSNR are deterministic and available in the bundled FFmpeg.
+  // Do not run libvmaf here: the Windows build may require an external model
+  // and can make the quality command appear frozen.
   const ssimResult = await runMetric(sourcePath, outputPath, "ssim");
   const psnrResult = await runMetric(sourcePath, outputPath, "psnr");
-  const vmafResult = await runMetric(sourcePath, outputPath, "libvmaf");
 
   const successful: string[] = [];
   if (ssimResult.value !== null) successful.push(`SSIM ${ssimResult.value.toFixed(6)}`);
   if (psnrResult.value !== null) successful.push(`PSNR ${psnrResult.value.toFixed(3)} dB`);
-  if (vmafResult.value !== null) successful.push(`VMAF ${vmafResult.value.toFixed(3)}`);
 
   const failures: string[] = [];
   if (ssimResult.value === null) failures.push(`SSIM (exit ${ssimResult.code ?? "error"})`);
   if (psnrResult.value === null) failures.push(`PSNR (exit ${psnrResult.code ?? "error"})`);
-  if (vmafResult.value === null) failures.push(`VMAF (exit ${vmafResult.code ?? "error"})`);
 
   let note = "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform, with both streams normalized to 30 fps and a 1/30 timebase.";
   if (successful.length > 0) note += ` ${successful.join("; ")}.`;
   if (failures.length > 0) note += ` Could not parse: ${failures.join(", ")}.`;
+  note += " VMAF is disabled for this validator.";
 
   return {
     ssim: ssimResult.value,
     psnr: psnrResult.value,
-    vmaf: vmafResult.value,
+    vmaf: null,
     note,
   };
 }
@@ -216,12 +206,6 @@ export async function validateOutput(
     warnings.push("PSNR could not be measured.");
   } else if (metrics.psnr < MIN_PSNR_DB) {
     warnings.push(`PSNR quality is below the minimum threshold: ${metrics.psnr.toFixed(3)} dB < ${MIN_PSNR_DB} dB.`);
-  }
-
-  if (metrics.vmaf === null) {
-    warnings.push("VMAF could not be measured.");
-  } else if (metrics.vmaf < MIN_VMAF) {
-    warnings.push(`VMAF quality is below the minimum threshold: ${metrics.vmaf.toFixed(3)} < ${MIN_VMAF}.`);
   }
 
   return {
