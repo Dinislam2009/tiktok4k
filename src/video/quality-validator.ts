@@ -1,5 +1,14 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { analyzeVideo } from "./analyzer.js";
 import type { VideoMetadata } from "./types.js";
+
+export interface QualityMetrics {
+  ssim: number | null;
+  psnr: number | null;
+  note: string;
+}
 
 export interface QualityValidation {
   source: VideoMetadata;
@@ -13,6 +22,7 @@ export interface QualityValidation {
     videoBitrate: number;
     audioBitrate: number | null;
   };
+  metrics: QualityMetrics;
   warnings: string[];
   passed: boolean;
 }
@@ -22,6 +32,75 @@ const TARGET_HEIGHT = 1920;
 const TARGET_FPS = 30;
 const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
+
+function getBinary(): string {
+  const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
+  if (!existsSync(executable)) throw new Error(`FFmpeg binary not found: ${executable}`);
+  return executable;
+}
+
+function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
+  const patterns = name === "SSIM"
+    ? [/All:\s*([0-9.]+)/]
+    : [/PSNR y:\s*([0-9.]+)/];
+  for (const pattern of patterns) {
+    const match = stderr.match(pattern);
+    if (match) {
+      const value = Number(match[1]);
+      if (Number.isFinite(value)) return value;
+    }
+  }
+  return null;
+}
+
+async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
+  const ffmpeg = getBinary();
+  const cropFilter =
+    "scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,setsar=1";
+
+  const filter =
+    `[0:v]${cropFilter},setpts=PTS-STARTPTS[source];` +
+    `[1:v]setpts=PTS-STARTPTS[encoded];` +
+    `[source][encoded]ssim=stats_file=-[ssim];` +
+    `[source][encoded]psnr=stats_file=-[psnr]`;
+
+  return await new Promise<QualityMetrics>((resolve) => {
+    const child = spawn(
+      ffmpeg,
+      [
+        "-hide_banner",
+        "-i", sourcePath,
+        "-i", outputPath,
+        "-filter_complex", filter,
+        "-map", "[ssim]",
+        "-f", "null",
+        "-",
+      ],
+      { windowsHide: true },
+    );
+
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      if (stderr.length > 100000) stderr = stderr.slice(-100000);
+    });
+    child.on("error", () => {
+      resolve({ ssim: null, psnr: null, note: "Quality metrics could not be started." });
+    });
+    child.on("close", () => {
+      const ssim = parseMetric(stderr, "SSIM");
+      const psnr = parseMetric(stderr, "PSNR");
+      resolve({
+        ssim,
+        psnr,
+        note: ssim !== null && psnr !== null
+          ? "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform."
+          : "FFmpeg did not expose SSIM/PSNR for this build or comparison.",
+      });
+    });
+  });
+}
 
 export async function validateOutput(
   sourcePath: string,
@@ -68,8 +147,6 @@ export async function validateOutput(
     );
   }
 
-  // FFprobe can report a misleadingly low AAC stream bitrate for MP4/M4A
-  // output. Validate the presence and codec of the audio stream instead.
   if (source.audioCodec !== null && output.audioCodec === null) {
     warnings.push("Audio stream is missing from the output.");
   }
@@ -78,10 +155,7 @@ export async function validateOutput(
     warnings.push("Output resolution is invalid.");
   }
 
-  // Do not use container-reported video bitrate as a hard quality metric.
-  // The renderer uses CRF for quality control, so bitrate naturally varies
-  // with scene complexity. A low average bitrate can still be a valid
-  // high-quality CRF encode.
+  const metrics = await measureQuality(sourcePath, outputPath);
 
   return {
     source,
@@ -98,6 +172,7 @@ export async function validateOutput(
           ? output.audioBitrate - source.audioBitrate
           : null,
     },
+    metrics,
     warnings,
     passed: warnings.length === 0,
   };
