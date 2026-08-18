@@ -50,7 +50,7 @@ function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   // Quality mode is the highest-quality social-upload master. CRF is the
   // primary quality control; the veryslow preset is used by the renderer so
   // x264 can spend more analysis time preserving difficult details.
-  const crfBase = quality === "quality" ? 12 : quality === "size" ? 24 : 20;
+  const crfBase = quality === "quality" ? 10 : quality === "size" ? 24 : 20;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
 
   const minBase = quality === "quality" ? 10000 : quality === "size" ? 2000 : 4500;
