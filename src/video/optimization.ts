@@ -38,7 +38,9 @@ const TARGET_WIDTH = 1080;
 const TARGET_HEIGHT = 1920;
 const TARGET_ASPECT = TARGET_WIDTH / TARGET_HEIGHT;
 
-function clamp(value: number, min: number, max: number): number { return Math.min(Math.max(value, min), max); }
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
 
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
@@ -51,9 +53,30 @@ function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
 
 function buildFilter(sourceWidth: number, sourceHeight: number, framing: FramingMode) {
   const sourceAspect = sourceWidth / sourceHeight;
-  if (Math.abs(sourceAspect - TARGET_ASPECT) <= 0.002) return { filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:flags=lanczos,setsar=1`, crop: false, pad: false, scale: true };
-  if (framing === "crop") return { filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1`, crop: true, pad: false, scale: true };
-  return { filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`, crop: false, pad: true, scale: true };
+  if (Math.abs(sourceAspect - TARGET_ASPECT) <= 0.002) {
+    return {
+      filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:flags=lanczos,setsar=1`,
+      crop: false,
+      pad: false,
+      scale: true,
+    };
+  }
+
+  if (framing === "crop") {
+    return {
+      filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1`,
+      crop: true,
+      pad: false,
+      scale: true,
+    };
+  }
+
+  return {
+    filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+    crop: false,
+    pad: true,
+    scale: true,
+  };
 }
 
 export function createOptimizationPlan(metadata: VideoMetadata, request: OptimizationRequest): OptimizationPlan {
@@ -73,7 +96,16 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
     target: request.target,
     quality: request.quality,
     framing,
-    input: { width: metadata.width, height: metadata.height, fps: metadata.fps, videoCodec: metadata.videoCodec, bitrate: metadata.bitrate, pixelFormat: metadata.pixelFormat, isHDR: metadata.isHDR, duration: metadata.duration },
+    input: {
+      width: metadata.width,
+      height: metadata.height,
+      fps: metadata.fps,
+      videoCodec: metadata.videoCodec,
+      bitrate: metadata.bitrate,
+      pixelFormat: metadata.pixelFormat,
+      isHDR: metadata.isHDR,
+      duration: metadata.duration,
+    },
     output: {
       width: TARGET_WIDTH,
       height: TARGET_HEIGHT,
@@ -91,7 +123,9 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       crop: geometry.crop,
       pad: geometry.pad,
       reencodeVideo: true,
-      reencodeAudio: metadata.audioCodec !== "aac" || metadata.audioBitrate !== (request.quality === "size" ? 128000 : 192000),
+      // The renderer explicitly encodes audio, so do not use the unreliable
+      // container-reported AAC bitrate to decide whether audio needs encoding.
+      reencodeAudio: true,
     },
     filter: geometry.filter,
     warnings,
