@@ -47,21 +47,24 @@ function clamp(value: number, min: number, max: number): number {
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
 
-  // Quality mode uses CRF as the primary quality control. A VBV ceiling keeps
-  // complex scenes from producing unnecessarily large spikes while allowing
-  // the encoder to spend bits where they actually improve the image.
+  // For a social-media export, quality mode should not collapse to a tiny
+  // bitrate simply because the source content is easy to compress. Keep CRF
+  // as the quality control while using a bitrate floor/target to guarantee a
+  // genuinely high-quality 1080x1920 master.
   const crfBase = quality === "quality" ? 16 : quality === "size" ? 24 : 20;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
-  const maxBitrate = quality === "quality" ? 16000 : quality === "size" ? 6000 : 9000;
-  const maxVideoBitrateKbps = Math.round(maxBitrate * frameFactor);
-  const videoBitrateKbps = Math.round((quality === "quality" ? 12000 : quality === "size" ? 3000 : 6000) * frameFactor);
+
+  const minBase = quality === "quality" ? 8000 : quality === "size" ? 2000 : 4500;
+  const targetBase = quality === "quality" ? 10000 : quality === "size" ? 3000 : 6000;
+  const maxBase = quality === "quality" ? 14000 : quality === "size" ? 5000 : 9000;
+
+  const minVideoBitrateKbps = Math.round(minBase * frameFactor);
+  const videoBitrateKbps = Math.round(targetBase * frameFactor);
+  const maxVideoBitrateKbps = Math.round(maxBase * frameFactor);
 
   return {
     crf,
-    // Kept for plan compatibility. CRF mode intentionally does not force a
-    // minimum bitrate because a simple scene may need far fewer bits without
-    // losing quality.
-    minVideoBitrateKbps: 0,
+    minVideoBitrateKbps,
     videoBitrateKbps,
     maxVideoBitrateKbps,
     bufferSizeKbps: maxVideoBitrateKbps * 2,
