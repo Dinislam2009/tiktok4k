@@ -58,16 +58,25 @@ export async function validateOutput(
   }
 
   if (output.pixelFormat !== "yuv420p") {
-    warnings.push(`Unexpected output pixel format: ${output.pixelFormat ?? "unknown"}.`);
+    warnings.push(
+      `Unexpected output pixel format: ${output.pixelFormat ?? "unknown"}.`,
+    );
   }
 
   if (output.audioCodec !== "aac") {
-    warnings.push(`Unexpected output audio codec: ${output.audioCodec ?? "none"}.`);
+    warnings.push(
+      `Unexpected output audio codec: ${output.audioCodec ?? "none"}.`,
+    );
   }
 
-  // AAC bitrate reported by FFprobe for MP4 can be misleading with the native
-  // FFmpeg AAC encoder. Validate that an AAC stream exists, but do not reject
-  // an otherwise valid output based on stream bit_rate metadata.
+  // FFprobe can report a very low AAC stream bitrate even when
+  // FFmpeg encoded the audio with the requested target bitrate.
+  // Therefore stream.bit_rate is not used as a hard quality failure.
+  //
+  // We only treat a missing audio stream as an actual problem.
+  if (source.audioCodec !== null && output.audioCodec === null) {
+    warnings.push("Audio stream is missing from the output.");
+  }
 
   if (output.width <= 0 || output.height <= 0) {
     warnings.push("Output resolution is invalid.");
