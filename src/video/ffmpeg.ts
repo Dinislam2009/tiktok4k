@@ -41,31 +41,29 @@ export class FFmpegRenderer {
     const preset = options.preset ?? (options.quality === "quality" ? "slow" : "medium");
     const crf = options.crf ?? plan.output.crf;
 
+    const qualityRateControl = options.quality === "quality"
+      ? [
+          // Quality mode is CRF-driven. maxrate/bufsize only prevent extreme
+          // bitrate spikes; minrate/CBR are deliberately avoided because they
+          // can make x264 spend bits on easy frames or behave unexpectedly.
+          "-crf", String(crf),
+          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+          "-bufsize", `${plan.output.bufferSizeKbps}k`,
+        ]
+      : [
+          "-crf", String(crf),
+          "-b:v", `${plan.output.videoBitrateKbps}k`,
+          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+          "-bufsize", `${plan.output.bufferSizeKbps}k`,
+        ];
+
     const args = [
       "-hide_banner", "-y", "-i", options.inputPath,
       "-map", "0:v:0", "-map", "0:a:0?",
       "-vf", plan.filter,
       "-c:v", encoder,
       "-preset", preset,
-      ...(options.quality === "quality"
-        ? [
-            "-b:v", `${plan.output.videoBitrateKbps}k`,
-            "-minrate", `${plan.output.minVideoBitrateKbps}k`,
-            "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
-            "-bufsize", `${plan.output.bufferSizeKbps}k`,
-          ]
-        : [
-            "-crf", String(crf),
-            "-b:v", `${plan.output.videoBitrateKbps}k`,
-            "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
-            "-bufsize", `${plan.output.bufferSizeKbps}k`,
-          ]),
-      ...(encoder === "libx264" && options.quality === "quality"
-        ? [
-            "-x264-params",
-            `nal-hrd=cbr:force-cfr=1:vbv-maxrate=${plan.output.maxVideoBitrateKbps}:vbv-minrate=${plan.output.minVideoBitrateKbps}:vbv-bufsize=${plan.output.bufferSizeKbps}`,
-          ]
-        : []),
+      ...qualityRateControl,
       "-r", String(plan.output.fps),
       "-pix_fmt", plan.output.pixelFormat,
       "-c:a", "aac",
