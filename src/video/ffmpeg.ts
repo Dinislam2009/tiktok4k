@@ -39,6 +39,7 @@ export class FFmpegRenderer {
     const plan = createOptimizationPlan(metadata, options);
     const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
     const preset = options.preset ?? "medium";
+    const crf = options.crf ?? plan.output.crf;
 
     const args = [
       "-hide_banner", "-y", "-i", options.inputPath,
@@ -46,8 +47,7 @@ export class FFmpegRenderer {
       "-vf", plan.filter,
       "-c:v", encoder,
       "-preset", preset,
-      "-b:v", `${plan.output.videoBitrateKbps}k`,
-      "-minrate", `${plan.output.minVideoBitrateKbps}k`,
+      "-crf", String(crf),
       "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
       "-bufsize", `${plan.output.bufferSizeKbps}k`,
       "-r", String(plan.output.fps),
