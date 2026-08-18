@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "analyze": "tsx src/test-analyzer.ts",
-    "render": "tsx src/test-renderer.ts"
+    "render": "tsx src/test-renderer.ts",
+    "quality": "tsx src/test-quality.ts"
   },
   "keywords": ["video", "ffmpeg", "tiktok", "instagram"],
   "author": "Dinislam2009",
