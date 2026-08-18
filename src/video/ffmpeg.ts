@@ -12,31 +12,16 @@ export interface RenderOptions extends OptimizationRequest {
   preset?: string;
 }
 
-export interface RenderProgress {
-  percent: number;
-  frame: number;
-  fps: number;
-  bitrate: string;
-  outTimeSeconds: number;
-  speed: string;
-}
+export interface RenderProgress { percent: number; frame: number; fps: number; bitrate: string; outTimeSeconds: number; speed: string; }
+export interface RenderResult { outputPath: string; duration: number; }
 
-export interface RenderResult {
-  outputPath: string;
-  duration: number;
-}
-
-function getBinary(name: "ffmpeg.exe"): string {
-  const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", name);
-
-  if (!existsSync(executable)) {
-    throw new Error(`FFmpeg binary not found: ${executable}`);
-  }
-
+function getBinary(): string {
+  const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
+  if (!existsSync(executable)) throw new Error(`FFmpeg binary not found: ${executable}`);
   return executable;
 }
 
-function parseTime(value: string | undefined): number {
+function parseTime(value?: string): number {
   if (!value) return 0;
   const parts = value.split(":").map(Number);
   if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return 0;
@@ -46,67 +31,41 @@ function parseTime(value: string | undefined): number {
 export class FFmpegRenderer {
   private process: ChildProcessWithoutNullStreams | null = null;
 
-  async render(
-    options: RenderOptions,
-    onProgress?: (progress: RenderProgress) => void,
-  ): Promise<RenderResult> {
+  async render(options: RenderOptions, onProgress?: (progress: RenderProgress) => void): Promise<RenderResult> {
     const metadata: VideoMetadata = await analyzeVideo(options.inputPath);
-
-    if (metadata.duration <= 0) {
-      throw new Error("Cannot render a video with unknown or zero duration.");
-    }
-
-    if (existsSync(options.outputPath)) {
-      throw new Error(`Output file already exists: ${options.outputPath}`);
-    }
+    if (metadata.duration <= 0) throw new Error("Cannot render a video with unknown or zero duration.");
+    if (existsSync(options.outputPath)) throw new Error(`Output file already exists: ${options.outputPath}`);
 
     const plan = createOptimizationPlan(metadata, options);
-    const codec = plan.output.codec;
-    const encoder = codec === "libx265" ? "libx265" : "libx264";
-    const crf = options.crf ?? (encoder === "libx265" ? 26 : 20);
+    const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
+    const crf = options.crf ?? plan.output.crf;
     const preset = options.preset ?? "medium";
 
     const args = [
-      "-hide_banner",
-      "-y",
-      "-i",
-      options.inputPath,
-      "-map",
-      "0:v:0",
-      "-map",
-      "0:a:0?",
-      "-vf",
-      plan.filter,
-      "-c:v",
-      encoder,
-      "-preset",
-      preset,
-      "-crf",
-      String(crf),
-      "-r",
-      String(plan.output.fps),
-      "-pix_fmt",
-      plan.output.pixelFormat,
-      "-c:a",
-      "aac",
-      "-b:a",
-      `${plan.output.audioBitrateKbps}k`,
-      "-movflags",
-      "+faststart",
-      "-progress",
-      "pipe:1",
+      "-hide_banner", "-y", "-i", options.inputPath,
+      "-map", "0:v:0", "-map", "0:a:0?",
+      "-vf", plan.filter,
+      "-c:v", encoder,
+      "-preset", preset,
+      "-crf", String(crf),
+      "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+      "-bufsize", `${plan.output.bufferSizeKbps}k`,
+      "-r", String(plan.output.fps),
+      "-pix_fmt", plan.output.pixelFormat,
+      "-c:a", "aac",
+      "-b:a", `${plan.output.audioBitrateKbps}k`,
+      "-movflags", "+faststart",
+      "-progress", "pipe:1",
       "-nostats",
       options.outputPath,
     ];
 
-    const ffmpegPath = getBinary("ffmpeg.exe");
-    this.process = spawn(ffmpegPath, args, { windowsHide: true });
+    this.process = spawn(getBinary(), args, { windowsHide: true });
 
     return await new Promise<RenderResult>((resolve, reject) => {
       let stderr = "";
       let progressBuffer = "";
       let lastProgress: RenderProgress | null = null;
-
       this.process!.stdout.setEncoding("utf8");
       this.process!.stderr.setEncoding("utf8");
 
@@ -115,28 +74,19 @@ export class FFmpegRenderer {
         const lines = progressBuffer.split(/\r?\n/);
         progressBuffer = lines.pop() ?? "";
         const values = new Map<string, string>();
-
         for (const line of lines) {
           const separator = line.indexOf("=");
-          if (separator <= 0) continue;
-          values.set(line.slice(0, separator), line.slice(separator + 1));
+          if (separator > 0) values.set(line.slice(0, separator), line.slice(separator + 1));
         }
-
         const outTimeSeconds = parseTime(values.get("out_time"));
-        const percent = Math.min(
-          100,
-          Math.max(0, (outTimeSeconds / metadata.duration) * 100),
-        );
-
         lastProgress = {
-          percent,
+          percent: Math.min(100, Math.max(0, (outTimeSeconds / metadata.duration) * 100)),
           frame: Number(values.get("frame") ?? 0),
           fps: Number(values.get("fps") ?? 0),
           bitrate: values.get("bitrate") ?? "N/A",
           outTimeSeconds,
           speed: values.get("speed") ?? "N/A",
         };
-
         onProgress?.(lastProgress);
       });
 
@@ -144,29 +94,17 @@ export class FFmpegRenderer {
         stderr += chunk;
         if (stderr.length > 20000) stderr = stderr.slice(-20000);
       });
-
       this.process!.on("error", (error) => {
         this.process = null;
         reject(new Error(`Failed to start FFmpeg: ${error.message}`));
       });
-
       this.process!.on("close", (code) => {
         this.process = null;
-
         if (code !== 0) {
           reject(new Error(`FFmpeg exited with code ${code}.\n${stderr.trim()}`));
           return;
         }
-
-        onProgress?.({
-          percent: 100,
-          frame: lastProgress?.frame ?? 0,
-          fps: lastProgress?.fps ?? 0,
-          bitrate: lastProgress?.bitrate ?? "N/A",
-          outTimeSeconds: metadata.duration,
-          speed: lastProgress?.speed ?? "N/A",
-        });
-
+        onProgress?.({ percent: 100, frame: lastProgress?.frame ?? 0, fps: lastProgress?.fps ?? 0, bitrate: lastProgress?.bitrate ?? "N/A", outTimeSeconds: metadata.duration, speed: lastProgress?.speed ?? "N/A" });
         resolve({ outputPath: options.outputPath, duration: metadata.duration });
       });
     });
