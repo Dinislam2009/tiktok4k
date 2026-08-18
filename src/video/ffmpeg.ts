@@ -125,16 +125,17 @@ export class FFmpegRenderer {
 
     try {
       if (qualityTwoPass) {
-        // Two-pass encoding makes the quality-mode bitrate target predictable.
-        // Pass 2 also enforces the configured bitrate floor so easy scenes
-        // cannot collapse into a much smaller file than the quality profile.
+        // Quality mode is the high-quality master. Use two-pass CBR-style
+        // control so the requested target bitrate is actually delivered,
+        // instead of allowing easy scenes to fall well below the target.
         const target = `${plan.output.videoBitrateKbps}k`;
-        const minrate = `${plan.output.minVideoBitrateKbps}k`;
-        const maxrate = `${plan.output.maxVideoBitrateKbps}k`;
         const firstPassArgs = [
           ...commonArgs,
           "-an",
           "-b:v", target,
+          "-minrate", target,
+          "-maxrate", target,
+          "-bufsize", `${plan.output.videoBitrateKbps * 2}k`,
           "-pass", "1",
           "-passlogfile", passLog,
           "-f", "null",
@@ -146,9 +147,9 @@ export class FFmpegRenderer {
           ...commonArgs,
           ...audioArgs,
           "-b:v", target,
-          "-minrate", minrate,
-          "-maxrate", maxrate,
-          "-bufsize", `${plan.output.bufferSizeKbps}k`,
+          "-minrate", target,
+          "-maxrate", target,
+          "-bufsize", `${plan.output.videoBitrateKbps * 2}k`,
           "-pass", "2",
           "-passlogfile", passLog,
           "-progress", "pipe:1",
@@ -157,20 +158,12 @@ export class FFmpegRenderer {
         ];
         await this.run(secondPassArgs, metadata, onProgress, true);
       } else {
-        const rateControl = options.quality === "quality"
-          ? [
-              "-crf", String(crf),
-              "-b:v", `${plan.output.videoBitrateKbps}k`,
-              "-minrate", `${plan.output.minVideoBitrateKbps}k`,
-              "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
-              "-bufsize", `${plan.output.bufferSizeKbps}k`,
-            ]
-          : [
-              "-crf", String(crf),
-              "-b:v", `${plan.output.videoBitrateKbps}k`,
-              "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
-              "-bufsize", `${plan.output.bufferSizeKbps}k`,
-            ];
+        const rateControl = [
+          "-crf", String(crf),
+          "-b:v", `${plan.output.videoBitrateKbps}k`,
+          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+          "-bufsize", `${plan.output.bufferSizeKbps}k`,
+        ];
 
         await this.run([
           ...commonArgs,
