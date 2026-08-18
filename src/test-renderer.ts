@@ -15,6 +15,9 @@ if (!inputPath || !outputPath) {
   process.exit(1);
 }
 
+const resolvedInputPath = path.resolve(inputPath);
+const resolvedOutputPath = path.resolve(outputPath);
+
 if (!["crop", "fit"].includes(framing)) {
   console.error("Framing must be crop or fit.");
   process.exit(1);
@@ -36,8 +39,8 @@ async function main() {
   try {
     const result = await renderer.render(
       {
-        inputPath: path.resolve(inputPath),
-        outputPath: path.resolve(outputPath),
+        inputPath: resolvedInputPath,
+        outputPath: resolvedOutputPath,
         target,
         quality,
         framing,
