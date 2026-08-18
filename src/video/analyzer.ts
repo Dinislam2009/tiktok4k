@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { runFFprobe } from "./ffprobe.js";
+import { estimateAudioBitrate, runFFprobe } from "./ffprobe.js";
 import type { VideoMetadata } from "./types.js";
 
 function parseFrameRate(value?: string): number {
@@ -52,6 +52,15 @@ export async function analyzeVideo(filePath: string): Promise<VideoMetadata> {
   const colorTransfer = videoStream.color_transfer ?? null;
   const colorPrimaries = videoStream.color_primaries ?? null;
 
+  let audioBitrate = parseNumber(audioStream?.bit_rate);
+
+  // AAC in MP4 can expose an unreliable stream-level bit_rate. When it is
+  // missing or suspiciously low, estimate the real average bitrate from packets.
+  if (audioStream && (audioBitrate === null || audioBitrate < 64000)) {
+    const estimated = await estimateAudioBitrate(filePath);
+    if (estimated !== null) audioBitrate = estimated;
+  }
+
   return {
     filePath,
     fileSize: fileStats.size,
@@ -70,7 +79,7 @@ export async function analyzeVideo(filePath: string): Promise<VideoMetadata> {
     colorPrimaries,
     isHDR: detectHDR(colorTransfer, colorPrimaries),
     audioCodec: audioStream?.codec_name ?? null,
-    audioBitrate: parseNumber(audioStream?.bit_rate),
+    audioBitrate,
     audioSampleRate: parseNumber(audioStream?.sample_rate),
     audioChannels: typeof audioStream?.channels === "number" ? audioStream.channels : null,
     rotation: detectRotation(videoStream),
