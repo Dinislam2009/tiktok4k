@@ -41,8 +41,16 @@ function getBinary(): string {
 
 function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
   const patterns = name === "SSIM"
-    ? [/All:\s*([0-9.]+)/]
-    : [/PSNR y:\s*([0-9.]+)/];
+    ? [
+        /SSIM.*?All:\s*([0-9.]+)/i,
+        /All:\s*([0-9.]+)/i,
+      ]
+    : [
+        /PSNR.*?average:\s*([0-9.]+)/i,
+        /PSNR average:\s*([0-9.]+)/i,
+        /PSNR y:\s*([0-9.]+)/i,
+      ];
+
   for (const pattern of patterns) {
     const match = stderr.match(pattern);
     if (match) {
@@ -50,6 +58,7 @@ function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
       if (Number.isFinite(value)) return value;
     }
   }
+
   return null;
 }
 
@@ -73,6 +82,7 @@ async function measureQuality(sourcePath: string, outputPath: string): Promise<Q
         "-i", outputPath,
         "-filter_complex", filter,
         "-map", "[ssim]",
+        "-map", "[psnr]",
         "-f", "null",
         "-",
       ],
@@ -83,20 +93,30 @@ async function measureQuality(sourcePath: string, outputPath: string): Promise<Q
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
-      if (stderr.length > 100000) stderr = stderr.slice(-100000);
+      if (stderr.length > 200000) stderr = stderr.slice(-200000);
     });
     child.on("error", () => {
       resolve({ ssim: null, psnr: null, note: "Quality metrics could not be started." });
     });
-    child.on("close", () => {
+    child.on("close", (code) => {
       const ssim = parseMetric(stderr, "SSIM");
       const psnr = parseMetric(stderr, "PSNR");
+
+      if (ssim !== null && psnr !== null) {
+        resolve({
+          ssim,
+          psnr,
+          note: "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform.",
+        });
+        return;
+      }
+
       resolve({
         ssim,
         psnr,
-        note: ssim !== null && psnr !== null
-          ? "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform."
-          : "FFmpeg did not expose SSIM/PSNR for this build or comparison.",
+        note: code === 0
+          ? "FFmpeg completed, but its SSIM/PSNR log format was not recognized."
+          : `FFmpeg quality comparison failed with exit code ${code}.`,
       });
     });
   });
