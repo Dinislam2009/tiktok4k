@@ -48,10 +48,15 @@ export class FFmpegRenderer {
       "-c:v", encoder,
       "-preset", preset,
       "-crf", String(crf),
+      // Keep the quality CRF, but also enforce a real bitrate floor/target.
+      // Without minrate/maxrate, CRF may spend only ~1.3 Mbps on simple video.
       "-b:v", `${plan.output.videoBitrateKbps}k`,
       "-minrate", `${plan.output.minVideoBitrateKbps}k`,
       "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
       "-bufsize", `${plan.output.bufferSizeKbps}k`,
+      ...(encoder === "libx264"
+        ? ["-x264-params", `nal-hrd=cbr:force-cfr=1:vbv-maxrate=${plan.output.maxVideoBitrateKbps}:vbv-bufsize=${plan.output.bufferSizeKbps}`]
+        : []),
       "-r", String(plan.output.fps),
       "-pix_fmt", plan.output.pixelFormat,
       "-c:a", "aac",
