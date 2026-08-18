@@ -35,13 +35,12 @@ interface FFProbeOutput {
 }
 
 interface FFProbePacket {
-  stream_index?: number;
   size?: string;
-  duration_time?: string;
 }
 
 interface FFProbePacketOutput {
   packets?: FFProbePacket[];
+  format?: { duration?: string };
 }
 
 function getFFprobePath(): string {
@@ -95,15 +94,18 @@ export function runFFprobe(filePath: string): Promise<FFProbeOutput> {
 }
 
 /**
- * Estimates average bitrate from packet sizes. This is used when a container's
- * stream-level AAC bit_rate metadata is missing or clearly unreliable.
+ * Estimates average audio bitrate from the total size of audio packets divided
+ * by the full container duration. Packet duration fields are intentionally not
+ * used because AAC-in-MP4 duration_time values can be missing or expressed in
+ * a way that makes a packet-duration sum inaccurate.
  */
 export async function estimateAudioBitrate(filePath: string): Promise<number | null> {
   const stdout = await runProcess([
     "-v", "error",
     "-select_streams", "a:0",
     "-show_packets",
-    "-show_entries", "packet=size,duration_time",
+    "-show_format",
+    "-show_entries", "packet=size:format=duration",
     "-of", "json",
     filePath,
   ]);
@@ -116,15 +118,13 @@ export async function estimateAudioBitrate(filePath: string): Promise<number | n
   }
 
   let totalBytes = 0;
-  let totalDuration = 0;
-
   for (const packet of result.packets ?? []) {
     const size = Number(packet.size);
-    const duration = Number(packet.duration_time);
     if (Number.isFinite(size) && size > 0) totalBytes += size;
-    if (Number.isFinite(duration) && duration > 0) totalDuration += duration;
   }
 
-  if (totalBytes <= 0 || totalDuration <= 0) return null;
-  return (totalBytes * 8) / totalDuration;
+  const duration = Number(result.format?.duration);
+  if (totalBytes <= 0 || !Number.isFinite(duration) || duration <= 0) return null;
+
+  return (totalBytes * 8) / duration;
 }
