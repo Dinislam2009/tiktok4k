@@ -45,12 +45,17 @@ function clamp(value: number, min: number, max: number): number {
 
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
-  const baseBitrate = quality === "quality" ? 8000 : quality === "size" ? 3000 : 5000;
+
+  // Target average video bitrates. Quality mode deliberately targets
+  // high-quality 1080x1920 social-video output while keeping a reasonable
+  // ceiling for complex scenes.
+  const baseBitrate = quality === "quality" ? 9000 : quality === "size" ? 3000 : 5500;
   const maxBitrate = quality === "quality" ? 12000 : quality === "size" ? 6000 : 8500;
-  const crfBase = quality === "quality" ? 18 : quality === "size" ? 24 : 21;
+  const crfBase = quality === "quality" ? 17 : quality === "size" ? 24 : 21;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
   const videoBitrateKbps = Math.round(baseBitrate * frameFactor);
-  const maxVideoBitrateKbps = Math.round(maxBitrate * frameFactor);
+  const maxVideoBitrateKbps = Math.max(videoBitrateKbps, Math.round(maxBitrate * frameFactor));
+
   return {
     crf,
     videoBitrateKbps,
@@ -132,8 +137,6 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       crop: geometry.crop,
       pad: geometry.pad,
       reencodeVideo: true,
-      // The renderer explicitly encodes audio, so do not use the unreliable
-      // container-reported AAC bitrate to decide whether audio needs encoding.
       reencodeAudio: true,
     },
     filter: geometry.filter,
