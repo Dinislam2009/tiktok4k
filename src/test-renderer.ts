@@ -42,8 +42,6 @@ async function main() {
         quality,
         framing,
         codec: "libx264",
-        crf: 20,
-        preset: "medium",
       },
       (progress) => {
         process.stdout.write(
