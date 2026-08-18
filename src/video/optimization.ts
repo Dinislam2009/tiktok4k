@@ -24,6 +24,7 @@ export interface OptimizationPlan {
     codec: VideoCodec;
     pixelFormat: "yuv420p";
     crf: number;
+    minVideoBitrateKbps: number;
     videoBitrateKbps: number;
     maxVideoBitrateKbps: number;
     bufferSizeKbps: number;
@@ -46,18 +47,21 @@ function clamp(value: number, min: number, max: number): number {
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
 
-  // Target average video bitrates. Quality mode deliberately targets
-  // high-quality 1080x1920 social-video output while keeping a reasonable
-  // ceiling for complex scenes.
-  const baseBitrate = quality === "quality" ? 9000 : quality === "size" ? 3000 : 5500;
-  const maxBitrate = quality === "quality" ? 12000 : quality === "size" ? 6000 : 8500;
+  // For quality mode use a bounded high-bitrate range. The minimum bitrate
+  // prevents x264 from undershooting badly on simple scenes; the target and
+  // ceiling leave room for complex motion and text-heavy screen recordings.
+  const minBase = quality === "quality" ? 8000 : quality === "size" ? 1800 : 4000;
+  const baseBitrate = quality === "quality" ? 10000 : quality === "size" ? 3000 : 5500;
+  const maxBitrate = quality === "quality" ? 14000 : quality === "size" ? 6000 : 8500;
   const crfBase = quality === "quality" ? 17 : quality === "size" ? 24 : 21;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
+  const minVideoBitrateKbps = Math.round(minBase * frameFactor);
   const videoBitrateKbps = Math.round(baseBitrate * frameFactor);
   const maxVideoBitrateKbps = Math.max(videoBitrateKbps, Math.round(maxBitrate * frameFactor));
 
   return {
     crf,
+    minVideoBitrateKbps,
     videoBitrateKbps,
     maxVideoBitrateKbps,
     bufferSizeKbps: maxVideoBitrateKbps * 2,
@@ -126,6 +130,7 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       codec,
       pixelFormat: "yuv420p",
       crf: encoding.crf,
+      minVideoBitrateKbps: encoding.minVideoBitrateKbps,
       videoBitrateKbps: encoding.videoBitrateKbps,
       maxVideoBitrateKbps: encoding.maxVideoBitrateKbps,
       bufferSizeKbps: encoding.bufferSizeKbps,
