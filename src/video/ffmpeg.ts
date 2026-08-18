@@ -25,7 +25,7 @@ function parseTime(value?: string): number {
   if (!value) return 0;
   const parts = value.split(":").map(Number);
   if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return 0;
-  return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return (parts[0] ?? 0) * 3600 + (parts[1] ?? 0) * 60 + (parts[2] ?? 0);
 }
 
 export class FFmpegRenderer {
