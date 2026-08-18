@@ -22,7 +22,6 @@ const TARGET_HEIGHT = 1920;
 const TARGET_FPS = 30;
 const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
-const MIN_VIDEO_BITRATE_KBPS = 2000;
 
 export async function validateOutput(
   sourcePath: string,
@@ -69,11 +68,8 @@ export async function validateOutput(
     );
   }
 
-  // FFprobe can report a very low AAC stream bitrate even when
-  // FFmpeg encoded the audio with the requested target bitrate.
-  // Therefore stream.bit_rate is not used as a hard quality failure.
-  //
-  // We only treat a missing audio stream as an actual problem.
+  // FFprobe can report a misleadingly low AAC stream bitrate for MP4/M4A
+  // output. Validate the presence and codec of the audio stream instead.
   if (source.audioCodec !== null && output.audioCodec === null) {
     warnings.push("Audio stream is missing from the output.");
   }
@@ -82,11 +78,10 @@ export async function validateOutput(
     warnings.push("Output resolution is invalid.");
   }
 
-  if (output.bitrate > 0 && output.bitrate / 1000 < MIN_VIDEO_BITRATE_KBPS) {
-    warnings.push(
-      `Video bitrate is unusually low: ${Math.round(output.bitrate / 1000)} kbps. Expected at least ${MIN_VIDEO_BITRATE_KBPS} kbps for a 1080x1920 TikTok output.`,
-    );
-  }
+  // Do not use container-reported video bitrate as a hard quality metric.
+  // The renderer uses CRF for quality control, so bitrate naturally varies
+  // with scene complexity. A low average bitrate can still be a valid
+  // high-quality CRF encode.
 
   return {
     source,
