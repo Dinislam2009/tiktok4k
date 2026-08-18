@@ -109,11 +109,19 @@ export class FFmpegRenderer {
       "-pix_fmt", plan.output.pixelFormat,
     ];
 
-    const audioArgs = [
-      "-c:a", "aac",
-      "-b:a", `${plan.output.audioBitrateKbps}k`,
-      "-movflags", "+faststart",
-    ];
+    const audioArgs = options.quality === "quality"
+      ? [
+          // Quality exports must not destroy an already-good AAC source.
+          // This FFmpeg build reports ~12 kb/s even when asked for 192k AAC,
+          // while stream copy preserves the original 192 kb/s AAC exactly.
+          "-c:a", "copy",
+          "-movflags", "+faststart",
+        ]
+      : [
+          "-c:a", "aac",
+          "-b:a", `${plan.output.audioBitrateKbps}k`,
+          "-movflags", "+faststart",
+        ];
 
     if (options.quality === "quality" && encoder === "libx264") {
       // Quality mode is a visual-quality master, not a file-size target.
