@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { analyzeVideo } from "./analyzer.js";
 import { createOptimizationPlan, type OptimizationRequest } from "./optimization.js";
 import type { VideoMetadata } from "./types.js";
@@ -31,54 +33,10 @@ function parseTime(value?: string): number {
 export class FFmpegRenderer {
   private process: ChildProcessWithoutNullStreams | null = null;
 
-  async render(options: RenderOptions, onProgress?: (progress: RenderProgress) => void): Promise<RenderResult> {
-    const metadata: VideoMetadata = await analyzeVideo(options.inputPath);
-    if (metadata.duration <= 0) throw new Error("Cannot render a video with unknown or zero duration.");
-    if (existsSync(options.outputPath)) throw new Error(`Output file already exists: ${options.outputPath}`);
-
-    const plan = createOptimizationPlan(metadata, options);
-    const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
-    const preset = options.preset ?? (options.quality === "quality" ? "slow" : "medium");
-    const crf = options.crf ?? plan.output.crf;
-
-    const qualityRateControl = options.quality === "quality"
-      ? [
-          // Quality exports must be deterministic. CRF + a bitrate floor is
-          // content-dependent and can still produce very small files with
-          // some FFmpeg/x264 builds. Use fixed target/min/max bitrate instead
-          // so every quality export stays at the intended high bitrate.
-          "-b:v", `${plan.output.videoBitrateKbps}k`,
-          "-minrate", `${plan.output.videoBitrateKbps}k`,
-          "-maxrate", `${plan.output.videoBitrateKbps}k`,
-          "-bufsize", `${plan.output.bufferSizeKbps}k`,
-        ]
-      : [
-          "-crf", String(crf),
-          "-b:v", `${plan.output.videoBitrateKbps}k`,
-          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
-          "-bufsize", `${plan.output.bufferSizeKbps}k`,
-        ];
-
-    const args = [
-      "-hide_banner", "-y", "-i", options.inputPath,
-      "-map", "0:v:0", "-map", "0:a:0?",
-      "-vf", plan.filter,
-      "-c:v", encoder,
-      "-preset", preset,
-      ...qualityRateControl,
-      "-r", String(plan.output.fps),
-      "-pix_fmt", plan.output.pixelFormat,
-      "-c:a", "aac",
-      "-b:a", `${plan.output.audioBitrateKbps}k`,
-      "-movflags", "+faststart",
-      "-progress", "pipe:1",
-      "-nostats",
-      options.outputPath,
-    ];
-
+  private run(args: string[], metadata: VideoMetadata, onProgress?: (progress: RenderProgress) => void, reportProgress = true): Promise<void> {
     this.process = spawn(getBinary(), args, { windowsHide: true });
 
-    return await new Promise<RenderResult>((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       let stderr = "";
       let progressBuffer = "";
       let lastProgress: RenderProgress | null = null;
@@ -103,7 +61,7 @@ export class FFmpegRenderer {
           outTimeSeconds,
           speed: values.get("speed") ?? "N/A",
         };
-        onProgress?.(lastProgress);
+        if (reportProgress) onProgress?.(lastProgress);
       });
 
       this.process!.stderr.on("data", (chunk: string) => {
@@ -120,10 +78,114 @@ export class FFmpegRenderer {
           reject(new Error(`FFmpeg exited with code ${code}.\n${stderr.trim()}`));
           return;
         }
-        onProgress?.({ percent: 100, frame: lastProgress?.frame ?? 0, fps: lastProgress?.fps ?? 0, bitrate: lastProgress?.bitrate ?? "N/A", outTimeSeconds: metadata.duration, speed: lastProgress?.speed ?? "N/A" });
-        resolve({ outputPath: options.outputPath, duration: metadata.duration });
+        if (reportProgress) {
+          onProgress?.({
+            percent: 100,
+            frame: lastProgress?.frame ?? 0,
+            fps: lastProgress?.fps ?? 0,
+            bitrate: lastProgress?.bitrate ?? "N/A",
+            outTimeSeconds: metadata.duration,
+            speed: lastProgress?.speed ?? "N/A",
+          });
+        }
+        resolve();
       });
     });
+  }
+
+  async render(options: RenderOptions, onProgress?: (progress: RenderProgress) => void): Promise<RenderResult> {
+    const metadata: VideoMetadata = await analyzeVideo(options.inputPath);
+    if (metadata.duration <= 0) throw new Error("Cannot render a video with unknown or zero duration.");
+    if (existsSync(options.outputPath)) throw new Error(`Output file already exists: ${options.outputPath}`);
+
+    const plan = createOptimizationPlan(metadata, options);
+    const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
+    const preset = options.preset ?? (options.quality === "quality" ? "slow" : "medium");
+    const crf = options.crf ?? plan.output.crf;
+
+    const commonArgs = [
+      "-hide_banner", "-y", "-i", options.inputPath,
+      "-map", "0:v:0",
+      "-vf", plan.filter,
+      "-c:v", encoder,
+      "-preset", preset,
+      "-r", String(plan.output.fps),
+      "-pix_fmt", plan.output.pixelFormat,
+    ];
+
+    const audioArgs = [
+      "-map", "0:a:0?",
+      "-c:a", "aac",
+      "-b:a", `${plan.output.audioBitrateKbps}k`,
+      "-movflags", "+faststart",
+    ];
+
+    const qualityTwoPass = options.quality === "quality" && encoder === "libx264";
+    const passLog = path.join(os.tmpdir(), `tiktok4k-${randomUUID()}`);
+
+    try {
+      if (qualityTwoPass) {
+        // Two-pass encoding makes the quality-mode bitrate target predictable.
+        // Unlike CRF-only or minrate/maxrate single-pass encoding, pass 2 uses
+        // the complexity data collected in pass 1 to spend the target bitrate
+        // where it improves visual quality most.
+        const target = `${plan.output.videoBitrateKbps}k`;
+        const firstPassArgs = [
+          ...commonArgs,
+          "-an",
+          "-b:v", target,
+          "-pass", "1",
+          "-passlogfile", passLog,
+          "-f", "null",
+          "NUL",
+        ];
+        await this.run(firstPassArgs, metadata, undefined, false);
+
+        const secondPassArgs = [
+          ...commonArgs,
+          ...audioArgs,
+          "-b:v", target,
+          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+          "-bufsize", `${plan.output.bufferSizeKbps}k`,
+          "-pass", "2",
+          "-passlogfile", passLog,
+          "-progress", "pipe:1",
+          "-nostats",
+          options.outputPath,
+        ];
+        await this.run(secondPassArgs, metadata, onProgress, true);
+      } else {
+        const rateControl = options.quality === "quality"
+          ? [
+              "-crf", String(crf),
+              "-b:v", `${plan.output.videoBitrateKbps}k`,
+              "-minrate", `${plan.output.minVideoBitrateKbps}k`,
+              "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+              "-bufsize", `${plan.output.bufferSizeKbps}k`,
+            ]
+          : [
+              "-crf", String(crf),
+              "-b:v", `${plan.output.videoBitrateKbps}k`,
+              "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+              "-bufsize", `${plan.output.bufferSizeKbps}k`,
+            ];
+
+        await this.run([
+          ...commonArgs,
+          ...audioArgs,
+          ...rateControl,
+          "-progress", "pipe:1",
+          "-nostats",
+          options.outputPath,
+        ], metadata, onProgress, true);
+      }
+    } finally {
+      for (const suffix of ["-0.log", "-0.log.mbtree", "-0.log.temp"]) {
+        try { rmSync(`${passLog}${suffix}`, { force: true }); } catch { /* best effort cleanup */ }
+      }
+    }
+
+    return { outputPath: options.outputPath, duration: metadata.duration };
   }
 
   cancel(): void {
