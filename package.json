@@ -1,15 +1,15 @@
 {
   "name": "tiktok4k",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Social Video Quality Optimizer",
+  "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "analyze": "tsx src/test-analyzer.ts"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["video", "ffmpeg", "tiktok", "instagram"],
+  "author": "Dinislam2009",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "devDependencies": {
     "@types/node": "^26.2.0",
     "tsx": "^4.23.12",
