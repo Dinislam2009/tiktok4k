@@ -126,10 +126,11 @@ export class FFmpegRenderer {
     try {
       if (qualityTwoPass) {
         // Two-pass encoding makes the quality-mode bitrate target predictable.
-        // Unlike CRF-only or minrate/maxrate single-pass encoding, pass 2 uses
-        // the complexity data collected in pass 1 to spend the target bitrate
-        // where it improves visual quality most.
+        // Pass 2 also enforces the configured bitrate floor so easy scenes
+        // cannot collapse into a much smaller file than the quality profile.
         const target = `${plan.output.videoBitrateKbps}k`;
+        const minrate = `${plan.output.minVideoBitrateKbps}k`;
+        const maxrate = `${plan.output.maxVideoBitrateKbps}k`;
         const firstPassArgs = [
           ...commonArgs,
           "-an",
@@ -145,7 +146,8 @@ export class FFmpegRenderer {
           ...commonArgs,
           ...audioArgs,
           "-b:v", target,
-          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+          "-minrate", minrate,
+          "-maxrate", maxrate,
           "-bufsize", `${plan.output.bufferSizeKbps}k`,
           "-pass", "2",
           "-passlogfile", passLog,
