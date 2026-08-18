@@ -33,11 +33,6 @@ const TARGET_HEIGHT = 1920;
 const TARGET_FPS = 30;
 const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
-
-// These are deliberately quality-oriented thresholds. They are not used as a
-// replacement for the technical checks below; they prevent a technically valid
-// encode from being reported as a quality success when the visual comparison
-// is materially degraded.
 const MIN_SSIM = 0.99;
 const MIN_PSNR_DB = 40;
 const MIN_VMAF = 90;
@@ -79,9 +74,6 @@ const cropFilter =
   `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1`;
 
 function buildReferenceFilter(): string {
-  // Both sides must have the same frame rate and timebase. The rendered MP4
-  // normally has a 1/15360 timebase while the source commonly has 1/30000;
-  // comparing those directly makes FFmpeg warn that results may be incorrect.
   return [
     `[0:v]${cropFilter},fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[reference]`,
     `[1:v]fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[encoded]`,
@@ -95,9 +87,8 @@ async function runMetric(
 ): Promise<{ value: number | null; stderr: string; code: number | null }> {
   const ffmpeg = getBinary();
   const metricLabel = metric === "ssim" ? "ssim_result" : metric === "psnr" ? "psnr_result" : "vmaf_result";
-  const filter =
-    `${buildReferenceFilter()};` +
-    `[reference][encoded]${metric === "libvmaf" ? "libvmaf" : metric}=stats_file=-[${metricLabel}]`;
+  const metricFilter = metric === "libvmaf" ? "libvmaf" : `${metric}=stats_file=-`;
+  const filter = `${buildReferenceFilter()};[reference][encoded]${metricFilter}[${metricLabel}]`;
 
   return await new Promise((resolve) => {
     const child = spawn(
@@ -132,11 +123,11 @@ async function runMetric(
 }
 
 async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
-  const [ssimResult, psnrResult, vmafResult] = await Promise.all([
-    runMetric(sourcePath, outputPath, "ssim"),
-    runMetric(sourcePath, outputPath, "psnr"),
-    runMetric(sourcePath, outputPath, "libvmaf"),
-  ]);
+  // Run sequentially. VMAF is substantially heavier than SSIM/PSNR, and
+  // running all three at once needlessly competes for CPU and memory.
+  const ssimResult = await runMetric(sourcePath, outputPath, "ssim");
+  const psnrResult = await runMetric(sourcePath, outputPath, "psnr");
+  const vmafResult = await runMetric(sourcePath, outputPath, "libvmaf");
 
   const successful: string[] = [];
   if (ssimResult.value !== null) successful.push(`SSIM ${ssimResult.value.toFixed(6)}`);
