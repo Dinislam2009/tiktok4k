@@ -96,7 +96,7 @@ export class FFmpegRenderer {
 
     const plan = createOptimizationPlan(metadata, options);
     const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
-    const preset = options.preset ?? (options.quality === "quality" ? "slow" : "medium");
+    const preset = options.preset ?? (options.quality === "quality" ? "veryslow" : "medium");
     const crf = options.crf ?? plan.output.crf;
 
     const commonArgs = [
@@ -117,9 +117,9 @@ export class FFmpegRenderer {
 
     if (options.quality === "quality" && encoder === "libx264") {
       // Quality mode is a visual-quality master, not a file-size target.
-      // CRF lets x264 spend bits where the image actually needs them instead
-      // of forcing simple scenes to waste bitrate. VBV only caps peaks so the
-      // resulting 1080x1920 H.264 file remains practical for social upload.
+      // CRF is the primary quality control. The veryslow preset gives x264
+      // more analysis time so it can preserve detail more efficiently at the
+      // same CRF. VBV only caps bitrate spikes for a practical social upload.
       await this.run([
         ...commonArgs,
         ...audioArgs,
