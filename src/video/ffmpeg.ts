@@ -43,10 +43,13 @@ export class FFmpegRenderer {
 
     const qualityRateControl = options.quality === "quality"
       ? [
-          // Quality mode is CRF-driven. maxrate/bufsize only prevent extreme
-          // bitrate spikes; minrate/CBR are deliberately avoided because they
-          // can make x264 spend bits on easy frames or behave unexpectedly.
+          // Quality exports use constrained CRF: CRF controls visual quality,
+          // while the bitrate floor/target prevents simple scenes from
+          // collapsing to very small files and the maxrate protects against
+          // excessive bitrate spikes.
           "-crf", String(crf),
+          "-b:v", `${plan.output.videoBitrateKbps}k`,
+          "-minrate", `${plan.output.minVideoBitrateKbps}k`,
           "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
           "-bufsize", `${plan.output.bufferSizeKbps}k`,
         ]
