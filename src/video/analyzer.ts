@@ -4,7 +4,9 @@ import type { VideoMetadata } from "./types.js";
 
 function parseFrameRate(value?: string): number {
   if (!value || value === "0/0") return 0;
-  const [numerator, denominator] = value.split("/").map(Number);
+  const [numeratorValue, denominatorValue] = value.split("/").map(Number);
+  const numerator = numeratorValue ?? 0;
+  const denominator = denominatorValue ?? 0;
   if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return 0;
   return numerator / denominator;
 }
@@ -36,18 +38,20 @@ export async function analyzeVideo(filePath: string): Promise<VideoMetadata> {
   if (!fileStats.isFile()) throw new Error("The selected path is not a file.");
 
   const result = await runFFprobe(filePath);
-  const videoStream = result.streams.find((stream) => stream.codec_type === "video");
-  const audioStream = result.streams.find((stream) => stream.codec_type === "audio");
+  const streams = result.streams ?? [];
+  const format = result.format ?? {};
+  const videoStream = streams.find((stream) => stream.codec_type === "video");
+  const audioStream = streams.find((stream) => stream.codec_type === "audio");
 
   if (!videoStream) throw new Error("No video stream was found.");
 
-  const duration = Number(result.format.duration ?? 0);
+  const duration = Number(format.duration ?? 0);
   const width = videoStream.width ?? 0;
   const height = videoStream.height ?? 0;
   if (width <= 0 || height <= 0) throw new Error("Invalid video resolution.");
 
   const fps = parseFrameRate(videoStream.avg_frame_rate ?? videoStream.r_frame_rate);
-  const videoBitrate = parseNumber(videoStream.bit_rate) ?? parseNumber(result.format.bit_rate) ?? 0;
+  const videoBitrate = parseNumber(videoStream.bit_rate) ?? parseNumber(format.bit_rate) ?? 0;
   const colorSpace = videoStream.color_space ?? null;
   const colorTransfer = videoStream.color_transfer ?? null;
   const colorPrimaries = videoStream.color_primaries ?? null;
@@ -64,7 +68,7 @@ export async function analyzeVideo(filePath: string): Promise<VideoMetadata> {
   return {
     filePath,
     fileSize: fileStats.size,
-    container: result.format.format_name ?? "unknown",
+    container: format.format_name ?? "unknown",
     duration: Number.isFinite(duration) ? duration : 0,
     width,
     height,
