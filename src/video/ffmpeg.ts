@@ -48,6 +48,7 @@ export class FFmpegRenderer {
       "-c:v", encoder,
       "-preset", preset,
       "-crf", String(crf),
+      "-b:v", `${plan.output.videoBitrateKbps}k`,
       "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
       "-bufsize", `${plan.output.bufferSizeKbps}k`,
       "-r", String(plan.output.fps),
