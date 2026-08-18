@@ -47,10 +47,10 @@ function clamp(value: number, min: number, max: number): number {
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
 
-  // Quality mode is the archival/social-upload master. Use a lower CRF than
-  // the other modes and a generous VBV ceiling. CRF is the primary quality
-  // control; maxrate only prevents pathological bitrate spikes.
-  const crfBase = quality === "quality" ? 14 : quality === "size" ? 24 : 20;
+  // Quality mode is the highest-quality social-upload master. CRF is the
+  // primary quality control; the veryslow preset is used by the renderer so
+  // x264 can spend more analysis time preserving difficult details.
+  const crfBase = quality === "quality" ? 12 : quality === "size" ? 24 : 20;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
 
   const minBase = quality === "quality" ? 10000 : quality === "size" ? 2000 : 4500;
