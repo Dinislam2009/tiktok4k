@@ -1,19 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { analyzeVideo } from "./analyzer";
-import type { VideoMetadata } from "./types";
+import { analyzeVideo } from "./analyzer.js";
+import { createOptimizationPlan, type OptimizationRequest } from "./optimization.js";
+import type { VideoMetadata } from "./types.js";
 
-export interface RenderOptions {
+export interface RenderOptions extends OptimizationRequest {
   inputPath: string;
   outputPath: string;
-  videoCodec?: "h264" | "h265";
   crf?: number;
   preset?: string;
-  audioBitrate?: number;
-  width?: number;
-  height?: number;
-  fps?: number;
 }
 
 export interface RenderProgress {
@@ -30,7 +26,7 @@ export interface RenderResult {
   duration: number;
 }
 
-function getBinary(name: "ffmpeg.exe" | "ffprobe.exe"): string {
+function getBinary(name: "ffmpeg.exe"): string {
   const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", name);
 
   if (!existsSync(executable)) {
@@ -42,17 +38,9 @@ function getBinary(name: "ffmpeg.exe" | "ffprobe.exe"): string {
 
 function parseTime(value: string | undefined): number {
   if (!value) return 0;
-
   const parts = value.split(":").map(Number);
-  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) {
-    return 0;
-  }
-
+  if (parts.length !== 3 || parts.some((part) => !Number.isFinite(part))) return 0;
   return parts[0] * 3600 + parts[1] * 60 + parts[2];
-}
-
-function quoteFilterValue(value: string): string {
-  return value.replace(/[:\\]/g, "\\$&");
 }
 
 export class FFmpegRenderer {
@@ -72,19 +60,11 @@ export class FFmpegRenderer {
       throw new Error(`Output file already exists: ${options.outputPath}`);
     }
 
-    const codec = options.videoCodec === "h265" ? "libx265" : "libx264";
-    const crf = options.crf ?? (codec === "libx265" ? 26 : 20);
+    const plan = createOptimizationPlan(metadata, options);
+    const codec = plan.output.codec;
+    const encoder = codec === "libx265" ? "libx265" : "libx264";
+    const crf = options.crf ?? (encoder === "libx265" ? 26 : 20);
     const preset = options.preset ?? "medium";
-    const audioBitrate = options.audioBitrate ?? 192;
-
-    const videoFilters: string[] = [];
-
-    if (options.width && options.height) {
-      videoFilters.push(
-        `scale=${options.width}:${options.height}:force_original_aspect_ratio=decrease`,
-        `pad=${options.width}:${options.height}:(ow-iw)/2:(oh-ih)/2`,
-      );
-    }
 
     const args = [
       "-hide_banner",
@@ -95,42 +75,32 @@ export class FFmpegRenderer {
       "0:v:0",
       "-map",
       "0:a:0?",
+      "-vf",
+      plan.filter,
       "-c:v",
-      codec,
+      encoder,
       "-preset",
       preset,
       "-crf",
       String(crf),
-    ];
-
-    if (options.fps) {
-      args.push("-r", String(options.fps));
-    }
-
-    if (videoFilters.length > 0) {
-      args.push("-vf", videoFilters.map(quoteFilterValue).join(","));
-    }
-
-    args.push(
+      "-r",
+      String(plan.output.fps),
       "-pix_fmt",
-      "yuv420p",
+      plan.output.pixelFormat,
       "-c:a",
       "aac",
       "-b:a",
-      `${audioBitrate}k`,
+      `${plan.output.audioBitrateKbps}k`,
       "-movflags",
       "+faststart",
       "-progress",
       "pipe:1",
       "-nostats",
       options.outputPath,
-    );
+    ];
 
     const ffmpegPath = getBinary("ffmpeg.exe");
-
-    this.process = spawn(ffmpegPath, args, {
-      windowsHide: true,
-    });
+    this.process = spawn(ffmpegPath, args, { windowsHide: true });
 
     return await new Promise<RenderResult>((resolve, reject) => {
       let stderr = "";
@@ -142,20 +112,14 @@ export class FFmpegRenderer {
 
       this.process!.stdout.on("data", (chunk: string) => {
         progressBuffer += chunk;
-
         const lines = progressBuffer.split(/\r?\n/);
         progressBuffer = lines.pop() ?? "";
-
         const values = new Map<string, string>();
 
         for (const line of lines) {
           const separator = line.indexOf("=");
           if (separator <= 0) continue;
-
-          values.set(
-            line.slice(0, separator),
-            line.slice(separator + 1),
-          );
+          values.set(line.slice(0, separator), line.slice(separator + 1));
         }
 
         const outTimeSeconds = parseTime(values.get("out_time"));
@@ -178,10 +142,7 @@ export class FFmpegRenderer {
 
       this.process!.stderr.on("data", (chunk: string) => {
         stderr += chunk;
-
-        if (stderr.length > 20000) {
-          stderr = stderr.slice(-20000);
-        }
+        if (stderr.length > 20000) stderr = stderr.slice(-20000);
       });
 
       this.process!.on("error", (error) => {
@@ -193,11 +154,7 @@ export class FFmpegRenderer {
         this.process = null;
 
         if (code !== 0) {
-          reject(
-            new Error(
-              `FFmpeg exited with code ${code}.\n${stderr.trim()}`,
-            ),
-          );
+          reject(new Error(`FFmpeg exited with code ${code}.\n${stderr.trim()}`));
           return;
         }
 
@@ -210,17 +167,13 @@ export class FFmpegRenderer {
           speed: lastProgress?.speed ?? "N/A",
         });
 
-        resolve({
-          outputPath: options.outputPath,
-          duration: metadata.duration,
-        });
+        resolve({ outputPath: options.outputPath, duration: metadata.duration });
       });
     });
   }
 
   cancel(): void {
     if (!this.process) return;
-
     this.process.kill();
     this.process = null;
   }
