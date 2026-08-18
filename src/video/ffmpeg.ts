@@ -43,14 +43,13 @@ export class FFmpegRenderer {
 
     const qualityRateControl = options.quality === "quality"
       ? [
-          // Quality exports use constrained CRF: CRF controls visual quality,
-          // while the bitrate floor/target prevents simple scenes from
-          // collapsing to very small files and the maxrate protects against
-          // excessive bitrate spikes.
-          "-crf", String(crf),
+          // Quality exports must be deterministic. CRF + a bitrate floor is
+          // content-dependent and can still produce very small files with
+          // some FFmpeg/x264 builds. Use fixed target/min/max bitrate instead
+          // so every quality export stays at the intended high bitrate.
           "-b:v", `${plan.output.videoBitrateKbps}k`,
-          "-minrate", `${plan.output.minVideoBitrateKbps}k`,
-          "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+          "-minrate", `${plan.output.videoBitrateKbps}k`,
+          "-maxrate", `${plan.output.videoBitrateKbps}k`,
           "-bufsize", `${plan.output.bufferSizeKbps}k`,
         ]
       : [
