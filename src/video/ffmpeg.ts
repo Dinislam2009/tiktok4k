@@ -48,10 +48,23 @@ export class FFmpegRenderer {
       "-c:v", encoder,
       "-preset", preset,
       ...(options.quality === "quality"
-        ? ["-b:v", `${plan.output.videoBitrateKbps}k`, "-maxrate", `${plan.output.maxVideoBitrateKbps}k`, "-bufsize", `${plan.output.bufferSizeKbps}k`]
-        : ["-crf", String(crf), "-b:v", `${plan.output.videoBitrateKbps}k`, "-maxrate", `${plan.output.maxVideoBitrateKbps}k`, "-bufsize", `${plan.output.bufferSizeKbps}k`]),
+        ? [
+            "-b:v", `${plan.output.videoBitrateKbps}k`,
+            "-minrate", `${plan.output.minVideoBitrateKbps}k`,
+            "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+            "-bufsize", `${plan.output.bufferSizeKbps}k`,
+          ]
+        : [
+            "-crf", String(crf),
+            "-b:v", `${plan.output.videoBitrateKbps}k`,
+            "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
+            "-bufsize", `${plan.output.bufferSizeKbps}k`,
+          ]),
       ...(encoder === "libx264" && options.quality === "quality"
-        ? ["-x264-params", `nal-hrd=cbr:force-cfr=1:vbv-maxrate=${plan.output.maxVideoBitrateKbps}:vbv-bufsize=${plan.output.bufferSizeKbps}`]
+        ? [
+            "-x264-params",
+            `nal-hrd=cbr:force-cfr=1:vbv-maxrate=${plan.output.maxVideoBitrateKbps}:vbv-minrate=${plan.output.minVideoBitrateKbps}:vbv-bufsize=${plan.output.bufferSizeKbps}`,
+          ]
         : []),
       "-r", String(plan.output.fps),
       "-pix_fmt", plan.output.pixelFormat,
