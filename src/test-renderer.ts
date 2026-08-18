@@ -1,11 +1,32 @@
 import path from "node:path";
-import { FFmpegRenderer } from "./video/ffmpeg";
+import { FFmpegRenderer } from "./video/ffmpeg.js";
+import type { FramingMode, QualityMode, SocialTarget } from "./video/optimization.js";
 
 const inputPath = process.argv[2];
 const outputPath = process.argv[3];
+const framing = (process.argv[4] ?? "crop") as FramingMode;
+const quality = (process.argv[5] ?? "balanced") as QualityMode;
+const target = (process.argv[6] ?? "tiktok") as SocialTarget;
 
 if (!inputPath || !outputPath) {
-  console.error("Usage: npm run render -- <input-video> <output-video>");
+  console.error(
+    "Usage: npm run render -- <input-video> <output-video> [crop|fit] [quality|balanced|size] [tiktok|instagram_reels]",
+  );
+  process.exit(1);
+}
+
+if (!["crop", "fit"].includes(framing)) {
+  console.error("Framing must be crop or fit.");
+  process.exit(1);
+}
+
+if (!["quality", "balanced", "size"].includes(quality)) {
+  console.error("Quality must be quality, balanced, or size.");
+  process.exit(1);
+}
+
+if (!["tiktok", "instagram_reels"].includes(target)) {
+  console.error("Target must be tiktok or instagram_reels.");
   process.exit(1);
 }
 
@@ -17,10 +38,12 @@ async function main() {
       {
         inputPath: path.resolve(inputPath),
         outputPath: path.resolve(outputPath),
-        videoCodec: "h264",
+        target,
+        quality,
+        framing,
+        codec: "libx264",
         crf: 20,
         preset: "medium",
-        audioBitrate: 192,
       },
       (progress) => {
         process.stdout.write(
@@ -30,6 +53,9 @@ async function main() {
     );
 
     process.stdout.write("\n");
+    console.log(`Target: ${target}`);
+    console.log(`Framing: ${framing}`);
+    console.log(`Quality: ${quality}`);
     console.log(`Rendered: ${result.outputPath}`);
   } catch (error) {
     process.stdout.write("\n");
