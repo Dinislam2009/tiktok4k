@@ -47,16 +47,15 @@ function clamp(value: number, min: number, max: number): number {
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const frameFactor = clamp(fps / 30, 1, 2);
 
-  // Quality mode is intentionally generous: this export is the high-quality
-  // master that will later be uploaded to a social platform which may
-  // transcode it again. The libx264 quality path uses two-pass encoding, so
-  // the target bitrate is the primary quality/size control there.
-  const crfBase = quality === "quality" ? 16 : quality === "size" ? 24 : 20;
+  // Quality mode is the archival/social-upload master. Use a lower CRF than
+  // the other modes and a generous VBV ceiling. CRF is the primary quality
+  // control; maxrate only prevents pathological bitrate spikes.
+  const crfBase = quality === "quality" ? 14 : quality === "size" ? 24 : 20;
   const crf = codec === "libx265" ? crfBase + 5 : crfBase;
 
   const minBase = quality === "quality" ? 10000 : quality === "size" ? 2000 : 4500;
   const targetBase = quality === "quality" ? 12000 : quality === "size" ? 3000 : 6000;
-  const maxBase = quality === "quality" ? 16000 : quality === "size" ? 5000 : 9000;
+  const maxBase = quality === "quality" ? 20000 : quality === "size" ? 5000 : 9000;
 
   const minVideoBitrateKbps = Math.round(minBase * frameFactor);
   const videoBitrateKbps = Math.round(targetBase * frameFactor);
