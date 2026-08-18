@@ -14,7 +14,9 @@ export interface OptimizationRequest {
 export interface OptimizationPlan {
   target: SocialTarget;
   quality: QualityMode;
-  input: Pick<VideoMetadata, "width" | "height" | "fps" | "videoCodec" | "bitrate" | "pixelFormat" | "isHDR">;
+  input: Pick<VideoMetadata, "width" | "height" | "fps" | "videoCodec" | "bitrate" | "pixelFormat" | "isHDR"> & {
+    duration: number;
+  };
   output: {
     width: number;
     height: number;
@@ -41,7 +43,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function selectBitrate(width: number, height: number, fps: number, quality: QualityMode): number {
+function selectBitrate(
+  width: number,
+  height: number,
+  fps: number,
+  quality: QualityMode,
+): number {
   const pixels = width * height;
   const frameFactor = clamp(fps / 30, 1, 2);
   const pixelFactor = clamp(pixels / (1080 * 1920), 0.75, 1.5);
@@ -59,15 +66,23 @@ export function createOptimizationPlan(
   const warnings: string[] = [];
 
   if (metadata.isHDR) {
-    warnings.push("HDR input detected; SDR conversion is not enabled in this initial plan.");
+    warnings.push(
+      "HDR input detected; SDR conversion is not enabled in this initial plan.",
+    );
   }
 
   if (metadata.width < TARGET_WIDTH || metadata.height < TARGET_HEIGHT) {
-    warnings.push("Source is smaller than the target canvas; upscaling may reduce perceived sharpness.");
+    warnings.push(
+      "Source is smaller than the target canvas; upscaling may reduce perceived sharpness.",
+    );
   }
 
-  if (metadata.videoCodec === codec.replace("lib", "") && metadata.width === TARGET_WIDTH && metadata.height === TARGET_HEIGHT) {
-    warnings.push("Source already matches the target geometry; re-encoding is still required when applying the selected bitrate/quality profile.");
+  if (metadata.videoCodec === codec.replace("lib", "") &&
+      metadata.width === TARGET_WIDTH &&
+      metadata.height === TARGET_HEIGHT) {
+    warnings.push(
+      "Source already matches the target geometry; re-encoding is still required when applying the selected quality profile.",
+    );
   }
 
   return {
@@ -81,6 +96,7 @@ export function createOptimizationPlan(
       bitrate: metadata.bitrate,
       pixelFormat: metadata.pixelFormat,
       isHDR: metadata.isHDR,
+      duration: metadata.duration,
     },
     output: {
       width: TARGET_WIDTH,
@@ -88,7 +104,12 @@ export function createOptimizationPlan(
       fps,
       codec,
       pixelFormat: "yuv420p",
-      videoBitrateKbps: selectBitrate(TARGET_WIDTH, TARGET_HEIGHT, fps, request.quality),
+      videoBitrateKbps: selectBitrate(
+        TARGET_WIDTH,
+        TARGET_HEIGHT,
+        fps,
+        request.quality,
+      ),
       audioBitrateKbps: request.quality === "size" ? 128 : 192,
       container: "mp4",
     },
@@ -96,7 +117,9 @@ export function createOptimizationPlan(
       scale: metadata.width !== TARGET_WIDTH || metadata.height !== TARGET_HEIGHT,
       crop: metadata.width / metadata.height > TARGET_WIDTH / TARGET_HEIGHT,
       reencodeVideo: true,
-      reencodeAudio: metadata.audioCodec !== "aac" || metadata.audioBitrate !== (request.quality === "size" ? 128000 : 192000),
+      reencodeAudio:
+        metadata.audioCodec !== "aac" ||
+        metadata.audioBitrate !== (request.quality === "size" ? 128000 : 192000),
     },
     warnings,
   };
