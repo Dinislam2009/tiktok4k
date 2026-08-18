@@ -34,6 +34,16 @@ interface FFProbeOutput {
   format?: FFProbeFormat;
 }
 
+interface FFProbePacket {
+  stream_index?: number;
+  size?: string;
+  duration_time?: string;
+}
+
+interface FFProbePacketOutput {
+  packets?: FFProbePacket[];
+}
+
 function getFFprobePath(): string {
   const executableName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
   const executablePath = path.resolve(process.cwd(), "binaries", "ffmpeg", executableName);
@@ -45,16 +55,9 @@ function getFFprobePath(): string {
   return executablePath;
 }
 
-export function runFFprobe(filePath: string): Promise<FFProbeOutput> {
+function runProcess(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const process = spawn(getFFprobePath(), [
-      "-v", "error",
-      "-show_streams",
-      "-show_format",
-      "-of", "json",
-      filePath,
-    ], { windowsHide: true });
-
+    const process = spawn(getFFprobePath(), args, { windowsHide: true });
     let stdout = "";
     let stderr = "";
 
@@ -69,13 +72,59 @@ export function runFFprobe(filePath: string): Promise<FFProbeOutput> {
         reject(new Error(`FFprobe exited with code ${code}: ${stderr.trim()}`));
         return;
       }
-
-      try {
-        const result = JSON.parse(stdout) as FFProbeOutput;
-        resolve({ streams: result.streams ?? [], format: result.format ?? {} });
-      } catch {
-        reject(new Error("FFprobe returned invalid JSON."));
-      }
+      resolve(stdout);
     });
   });
+}
+
+export function runFFprobe(filePath: string): Promise<FFProbeOutput> {
+  return runProcess([
+    "-v", "error",
+    "-show_streams",
+    "-show_format",
+    "-of", "json",
+    filePath,
+  ]).then((stdout) => {
+    try {
+      const result = JSON.parse(stdout) as FFProbeOutput;
+      return { streams: result.streams ?? [], format: result.format ?? {} };
+    } catch {
+      throw new Error("FFprobe returned invalid JSON.");
+    }
+  });
+}
+
+/**
+ * Estimates average bitrate from packet sizes. This is used when a container's
+ * stream-level AAC bit_rate metadata is missing or clearly unreliable.
+ */
+export async function estimateAudioBitrate(filePath: string): Promise<number | null> {
+  const stdout = await runProcess([
+    "-v", "error",
+    "-select_streams", "a:0",
+    "-show_packets",
+    "-show_entries", "packet=size,duration_time",
+    "-of", "json",
+    filePath,
+  ]);
+
+  let result: FFProbePacketOutput;
+  try {
+    result = JSON.parse(stdout) as FFProbePacketOutput;
+  } catch {
+    return null;
+  }
+
+  let totalBytes = 0;
+  let totalDuration = 0;
+
+  for (const packet of result.packets ?? []) {
+    const size = Number(packet.size);
+    const duration = Number(packet.duration_time);
+    if (Number.isFinite(size) && size > 0) totalBytes += size;
+    if (Number.isFinite(duration) && duration > 0) totalDuration += duration;
+  }
+
+  if (totalBytes <= 0 || totalDuration <= 0) return null;
+  return (totalBytes * 8) / totalDuration;
 }
