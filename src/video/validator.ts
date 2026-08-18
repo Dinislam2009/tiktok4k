@@ -94,11 +94,12 @@ export async function validateOutput(
   );
 
   if (metadata.duration > 0) {
+    const inputDuration = plan.input.duration;
     check(
       "duration",
-      Math.abs(metadata.duration - plan.inputDuration) <= Math.max(0.25, plan.inputDuration * 0.02),
+      Math.abs(metadata.duration - inputDuration) <= Math.max(0.25, inputDuration * 0.02),
       `${metadata.duration.toFixed(3)}s`,
-      `within 2% of ${plan.inputDuration.toFixed(3)}s`,
+      `within 2% of ${inputDuration.toFixed(3)}s`,
       "warning",
     );
   }
