@@ -18,5 +18,6 @@
       "@/*": ["src/renderer/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/renderer"]
 }
