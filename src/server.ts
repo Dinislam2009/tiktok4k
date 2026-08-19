@@ -10,9 +10,36 @@ const prisma = new PrismaClient();
 
 await fastify.register(cors, { origin: true });
 
-// Render Health Check маршруты (404 қатесін болдырмау үшін)
+// Render Health Check маршруты
 fastify.get("/", async () => {
   return { status: "ok", message: "TikTok 4K API is running" };
+});
+
+// Telegram WebApp арқылы тікелей авто-авторизация жасау маршруты
+fastify.post("/api/auth/telegram-webapp", async (request, reply) => {
+  const { telegramId, username } = request.body as { telegramId?: string; username?: string };
+  if (!telegramId) return reply.status(400).send({ error: "INVALID_REQUEST" });
+
+  try {
+    const tgIdBigInt = BigInt(telegramId);
+    const user = await prisma.user.upsert({
+      where: { telegramId: tgIdBigInt },
+      update: { username: username || null },
+      create: { telegramId: tgIdBigInt, username: username || null },
+    });
+
+    return {
+      status: "APPROVED",
+      user: {
+        id: user.id,
+        telegramId: user.telegramId.toString(),
+        username: user.username,
+      },
+    };
+  } catch (err) {
+    fastify.log.error(err);
+    return reply.status(500).send({ error: "AUTH_FAILED" });
+  }
 });
 
 fastify.post("/api/auth/request", async () => {
@@ -52,7 +79,6 @@ fastify.get("/api/auth/session/:id", async (request, reply) => {
     return reply.status(410).send({ error: "SESSION_EXPIRED" });
   }
 
-  // "APPROVED" немесе "authenticated" мәндерінің екеуін де қолдау
   if ((session.status === "APPROVED" || session.status === "authenticated") && session.user) {
     return {
       status: "APPROVED",
