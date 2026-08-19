@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
+import { app } from "electron";
 import { analyzeVideo } from "./analyzer.js";
 import { createOptimizationPlan, type OptimizationRequest } from "./optimization.js";
 import type { VideoMetadata } from "./types.js";
@@ -16,9 +17,8 @@ export interface RenderProgress { percent: number; frame: number; fps: number; b
 export interface RenderResult { outputPath: string; duration: number; }
 
 function getBinary(): string {
-  // Development немесе Production (app.asar.unpacked) ортасын тексеру
-  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app?.isPackaged;
-  
+  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app.isPackaged;
+
   const executable = isDev
     ? path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe")
     : path.resolve(process.resourcesPath, "binaries", "ffmpeg", "ffmpeg.exe");
