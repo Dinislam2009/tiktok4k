@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { bot } from "./bot.js";
 
@@ -9,7 +9,6 @@ const prisma = new PrismaClient();
 
 await fastify.register(cors, { origin: true });
 
-// 1. Авторизация сессиясын бастау
 fastify.post("/api/auth/request", async () => {
   const sessionId = randomUUID();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
@@ -18,7 +17,7 @@ fastify.post("/api/auth/request", async () => {
     data: { sessionId, expiresAt },
   });
 
-  const botUsername = "tiktokvideo4kbot"; // Өз ботыңның атын қой
+  const botUsername = "tiktokvideo4kbot";
 
   return {
     sessionId,
@@ -27,7 +26,6 @@ fastify.post("/api/auth/request", async () => {
   };
 });
 
-// 2. Сессия статусын тексеру
 fastify.get("/api/auth/session/:id", async (request, reply) => {
   const { id } = request.params as { id: string };
 
@@ -37,7 +35,16 @@ fastify.get("/api/auth/session/:id", async (request, reply) => {
   });
 
   if (!session) return reply.status(404).send({ error: "SESSION_NOT_FOUND" });
-  if (session.expiresAt < new Date()) return reply.status(410).send({ error: "SESSION_EXPIRED" });
+
+  if (session.expiresAt < new Date()) {
+    if (session.status === "PENDING") {
+      await prisma.authSession.update({
+        where: { sessionId: id },
+        data: { status: "EXPIRED" },
+      });
+    }
+    return reply.status(410).send({ error: "SESSION_EXPIRED" });
+  }
 
   if (session.status === "APPROVED" && session.user) {
     return {
@@ -53,30 +60,46 @@ fastify.get("/api/auth/session/:id", async (request, reply) => {
   return { status: "PENDING" };
 });
 
-// 3. Құрылғыны тіркеу (Device Registration)
 fastify.post("/api/devices/register", async (request, reply) => {
   const { userId, deviceId, name, platform } = request.body as {
-    userId: string;
-    deviceId: string;
+    userId?: string;
+    deviceId?: string;
     name?: string;
     platform?: string;
   };
 
+  if (!userId || !deviceId) {
+    return reply.status(400).send({ error: "INVALID_REQUEST" });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    return reply.status(404).send({ error: "USER_NOT_FOUND" });
+  }
+
   const existingDevice = await prisma.device.findUnique({ where: { deviceId } });
 
   if (existingDevice) {
-    await prisma.device.update({
+    if (existingDevice.userId !== userId) {
+      return reply.status(403).send({ error: "DEVICE_OWNED_BY_ANOTHER_USER" });
+    }
+
+    if (existingDevice.revokedAt) {
+      return reply.status(403).send({ error: "DEVICE_REVOKED" });
+    }
+
+    const device = await prisma.device.update({
       where: { deviceId },
-      data: { lastSeenAt: new Date() },
+      data: { lastSeenAt: new Date(), name, platform },
     });
-    return { status: "OK", device: existingDevice };
+
+    return { status: "OK", device };
   }
 
   const userDevicesCount = await prisma.device.count({
     where: { userId, revokedAt: null },
   });
 
-  // Free қолданушылар үшін 1 құрылғы лимиті
   if (userDevicesCount >= 1) {
     return reply.status(403).send({
       error: "DEVICE_LIMIT_REACHED",
@@ -85,15 +108,22 @@ fastify.post("/api/devices/register", async (request, reply) => {
   }
 
   const device = await prisma.device.create({
-    data: { userId, deviceId, name: name || "Desktop PC", platform: platform || "Windows" },
+    data: {
+      userId,
+      deviceId,
+      name: name || "Desktop PC",
+      platform: platform || "Windows",
+    },
   });
 
   return { status: "REGISTERED", device };
 });
 
-// 4. Пайдаланушының тарифі мен лимитін алу
-fastify.get("/api/user/status/:userId", async (request) => {
+fastify.get("/api/user/status/:userId", async (request, reply) => {
   const { userId } = request.params as { userId: string };
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return reply.status(404).send({ error: "USER_NOT_FOUND" });
 
   const sub = await prisma.subscription.findFirst({
     where: { userId, status: "active" },
@@ -102,9 +132,115 @@ fastify.get("/api/user/status/:userId", async (request) => {
   const plan = sub?.plan || "free";
 
   return {
-    plan, // "free" немесе "pro_monthly"
+    plan,
     dailyLimit: plan === "pro_monthly" ? "Unlimited" : 3,
   };
+});
+
+fastify.post("/api/usage/record", async (request, reply) => {
+  const { userId, deviceId } = request.body as { userId?: string; deviceId?: string };
+
+  if (!userId || !deviceId) {
+    return reply.status(401).send({
+      error: "UNAUTHORIZED",
+      message: "Видеоны оңтайландыру үшін Telegram арқылы кіріңіз.",
+    });
+  }
+
+  const device = await prisma.device.findUnique({ where: { deviceId } });
+  if (!device || device.userId !== userId || device.revokedAt) {
+    return reply.status(403).send({ error: "INVALID_DEVICE" });
+  }
+
+  const sub = await prisma.subscription.findFirst({
+    where: { userId, status: "active" },
+  });
+  const isPro = sub?.plan === "pro_monthly";
+
+  if (isPro) {
+    return { status: "ALLOWED", unlimited: true };
+  }
+
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(startOfDay);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const todayUsageCount = await tx.usageRecord.count({
+        where: {
+          userId,
+          createdAt: { gte: startOfDay, lt: endOfDay },
+          status: { in: ["RUNNING", "COMPLETED"] },
+        },
+      });
+
+      if (todayUsageCount >= 3) {
+        return null;
+      }
+
+      const record = await tx.usageRecord.create({
+        data: {
+          userId,
+          deviceId,
+          status: "RUNNING",
+        },
+      });
+
+      return {
+        recordId: record.id,
+        remaining: 3 - (todayUsageCount + 1),
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    if (!result) {
+      return reply.status(403).send({
+        error: "QUOTA_EXCEEDED",
+        message: "Бүгінгі тегін лимитіңіз (3 видео) таусылды. PRO тарифке өтіңіз!",
+      });
+    }
+
+    return { status: "ALLOWED", ...result };
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.status(409).send({
+      error: "USAGE_RESERVATION_CONFLICT",
+      message: "Лимитті тексеру кезінде қақтығыс болды. Қайта көріңіз.",
+    });
+  }
+});
+
+fastify.post("/api/usage/complete", async (request, reply) => {
+  const { userId, recordId } = request.body as { userId?: string; recordId?: string };
+  if (!userId || !recordId) return reply.status(400).send({ error: "INVALID_REQUEST" });
+
+  const record = await prisma.usageRecord.findUnique({ where: { id: recordId } });
+  if (!record || record.userId !== userId) return reply.status(404).send({ error: "USAGE_RECORD_NOT_FOUND" });
+  if (record.status !== "RUNNING") return reply.status(409).send({ error: "USAGE_RECORD_NOT_RUNNING" });
+
+  await prisma.usageRecord.update({
+    where: { id: recordId },
+    data: { status: "COMPLETED", completedAt: new Date() },
+  });
+
+  return { status: "COMPLETED" };
+});
+
+fastify.post("/api/usage/fail", async (request, reply) => {
+  const { userId, recordId } = request.body as { userId?: string; recordId?: string };
+  if (!userId || !recordId) return reply.status(400).send({ error: "INVALID_REQUEST" });
+
+  const record = await prisma.usageRecord.findUnique({ where: { id: recordId } });
+  if (!record || record.userId !== userId) return reply.status(404).send({ error: "USAGE_RECORD_NOT_FOUND" });
+  if (record.status !== "RUNNING") return reply.status(409).send({ error: "USAGE_RECORD_NOT_RUNNING" });
+
+  await prisma.usageRecord.update({
+    where: { id: recordId },
+    data: { status: "FAILED" },
+  });
+
+  return { status: "FAILED" };
 });
 
 const start = async () => {
@@ -113,7 +249,7 @@ const start = async () => {
     console.log("🤖 Telegram Bot іске қосылды!");
 
     await fastify.listen({ port: Number(process.env.PORT) || 3000, host: "0.0.0.0" });
-    console.log(`🚀 Fastify API сервер іске қосылды!`);
+    console.log("🚀 Fastify API сервер іске қосылды!");
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
@@ -121,51 +257,3 @@ const start = async () => {
 };
 
 start();
-// 5. Видео рендер жасау лимитін тексеру және тіркеу
-fastify.post("/api/usage/record", async (request, reply) => {
-  const { userId, deviceId } = request.body as { userId?: string; deviceId?: string };
-
-  if (!userId) {
-    return reply.status(401).send({ error: "UNAUTHORIZED", message: "Видеоны оңтайландыру үшін Telegram арқылы кіріңіз." });
-  }
-
-  // Пайдаланушының тарифін тексеру
-  const sub = await prisma.subscription.findFirst({
-    where: { userId, status: "active" },
-  });
-  const isPro = sub?.plan === "pro_monthly";
-
-  if (isPro) {
-    return { status: "ALLOWED" };
-  }
-
-  // Бүгінгі оңтайландырулар санын санау (00:00-ден бастап)
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-
-  const todayUsageCount = await prisma.usageRecord.count({
-    where: {
-      userId,
-      createdAt: { gte: startOfDay },
-      status: "COMPLETED",
-    },
-  });
-
-  if (todayUsageCount >= 3) {
-    return reply.status(403).send({
-      error: "QUOTA_EXCEEDED",
-      message: "Бүгінгі тегін лимитіңіз (3 видео) таусылды. PRO тарифке өтіңіз!",
-    });
-  }
-
-  // Жаңа операция тіркеу
-  const record = await prisma.usageRecord.create({
-    data: {
-      userId,
-      deviceId: deviceId || "unknown",
-      status: "COMPLETED",
-    },
-  });
-
-  return { status: "ALLOWED", remaining: 3 - (todayUsageCount + 1), recordId: record.id };
-});
