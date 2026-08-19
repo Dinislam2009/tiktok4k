@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app } from "electron";
 
 export interface QualityMetricsResult {
   ssim: number;
@@ -15,11 +14,16 @@ const FPS = 30;
 const TIMEOUT_MS = 240_000;
 const NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
 
+type ProcessWithResourcesPath = NodeJS.Process & { resourcesPath?: string };
+
 function getFFmpegBinary(): string {
-  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app.isPackaged;
-  const executable = isDev
-    ? path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe")
-    : path.resolve(process.resourcesPath, "binaries", "ffmpeg", "ffmpeg.exe");
+  const resourcesPath = (process as ProcessWithResourcesPath).resourcesPath;
+  const isPackaged = process.env.VITE_DEV_SERVER_URL === undefined && Boolean(resourcesPath);
+  const executableName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+
+  const executable = isPackaged
+    ? path.resolve(resourcesPath as string, "binaries", "ffmpeg", executableName)
+    : path.resolve(process.cwd(), "binaries", "ffmpeg", executableName);
 
   if (!existsSync(executable)) {
     throw new Error(`FFmpeg binary not found: ${executable}`);
