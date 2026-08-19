@@ -7,6 +7,9 @@ export const Titlebar: React.FC = () => {
   const { filePath, isRendering, reset } = useVideoStore();
   const { user, plan, dailyLimit, isAuthenticating, startAuth } = useAuthStore();
 
+  // Браузер немесе Electron қолданбасы екенін анықтау
+  const isElectron = typeof window !== "undefined" && Boolean((window as any).electronAPI);
+
   return (
     <div className="h-10 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-4 drag select-none">
       <span className="text-xs font-semibold text-neutral-400 tracking-wider flex items-center gap-2">
@@ -18,13 +21,13 @@ export const Titlebar: React.FC = () => {
           <div className="flex items-center gap-2">
             <span
               className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded flex items-center gap-1 ${
-                plan === "pro_monthly"
+                plan === "pro_monthly" || plan === "pro"
                   ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                   : "bg-neutral-800 text-neutral-400 border border-neutral-700"
               }`}
             >
-              {plan === "pro_monthly" && <Crown className="w-3 h-3 text-amber-400" />}
-              {plan === "pro_monthly" ? "PRO" : `FREE (${dailyLimit}/күн)`}
+              {(plan === "pro_monthly" || plan === "pro") && <Crown className="w-3 h-3 text-amber-400" />}
+              {plan === "pro_monthly" || plan === "pro" ? "PRO" : `FREE (${dailyLimit}/күн)`}
             </span>
 
             <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 font-medium">
@@ -52,26 +55,29 @@ export const Titlebar: React.FC = () => {
           </button>
         )}
 
-        <div className="flex items-center gap-1 ml-2 pl-2 border-l border-neutral-800">
-          <button
-            onClick={() => window.electronAPI.minimizeWindow()}
-            className="p-1.5 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white transition"
-          >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => window.electronAPI.maximizeWindow()}
-            className="p-1.5 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white transition"
-          >
-            <Square className="w-3 h-3" />
-          </button>
-          <button
-            onClick={() => window.electronAPI.closeWindow()}
-            className="p-1.5 hover:bg-red-600 rounded text-neutral-400 hover:text-white transition"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
+        {/* Тек Electron (.exe) қолданбасында ғана терезе батырмаларын көрсету */}
+        {isElectron && (
+          <div className="flex items-center gap-1 ml-2 pl-2 border-l border-neutral-800">
+            <button
+              onClick={() => (window as any).electronAPI?.minimizeWindow()}
+              className="p-1.5 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white transition"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => (window as any).electronAPI?.maximizeWindow()}
+              className="p-1.5 hover:bg-neutral-800 rounded text-neutral-400 hover:text-white transition"
+            >
+              <Square className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => (window as any).electronAPI?.closeWindow()}
+              className="p-1.5 hover:bg-red-600 rounded text-neutral-400 hover:text-white transition"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

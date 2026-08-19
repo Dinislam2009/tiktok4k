@@ -12,7 +12,6 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 const renderer = new FFmpegRenderer();
 
-// Файл бұрыннан бар болса, бірегей атау генерациялау (авто-инкремент)
 function getUniqueOutputPath(targetPath: string): string {
   if (!fs.existsSync(targetPath)) return targetPath;
 
@@ -45,7 +44,7 @@ function createWindow() {
       preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true, // Қауіпсіздік үшін Sandbox қосылды
     },
   });
 
@@ -72,7 +71,6 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("video:render", async (_, options) => {
-    // Бірегей файл жолын қамтамасыз ету
     const safeOutputPath = getUniqueOutputPath(options.outputPath);
 
     return await renderer.render(
@@ -96,6 +94,20 @@ app.whenReady().then(() => {
     shell.showItemInFolder(filePath);
   });
 
+  // URL-ді валидациялау
+  ipcMain.handle("shell:openExternal", async (_, url: string) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "https:" && parsed.hostname === "t.me") {
+        await shell.openExternal(url);
+      } else {
+        console.warn("Қауіпсіздік ескертуі: Рұқсат етілмеген URL бұғатталды ->", url);
+      }
+    } catch {
+      console.error("Жарамсыз URL форматы ->", url);
+    }
+  });
+
   ipcMain.handle("window:minimize", () => mainWindow?.minimize());
   ipcMain.handle("window:maximize", () => {
     if (mainWindow?.isMaximized()) {
@@ -109,7 +121,4 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
-});
-ipcMain.handle("shell:openExternal", async (_, url: string) => {
-  await shell.openExternal(url);
 });
