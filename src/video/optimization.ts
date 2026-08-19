@@ -54,12 +54,9 @@ function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   const targetBase = quality === "quality" ? 10000 : quality === "size" ? 3000 : 6000;
   const maxBase = quality === "quality" ? 14000 : quality === "size" ? 5000 : 9000;
 
-  // TikTok/Reels үшін максималды битрейтті 16 Mbps-пен шектеу
   const minVideoBitrateKbps = Math.round(minBase * frameFactor);
   const videoBitrateKbps = clamp(Math.round(targetBase * frameFactor), 2000, 14000);
   const maxVideoBitrateKbps = clamp(Math.round(maxBase * frameFactor), 4000, 16000);
-
-  // Буферді maxrate-тен 1.2 есе қылып ұстау
   const bufferSizeKbps = Math.round(maxVideoBitrateKbps * 1.2);
 
   return {
@@ -92,7 +89,7 @@ function buildFilter(sourceWidth: number, sourceHeight: number, framing: Framing
   }
 
   return {
-    filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-ih)/2:(oh-ih)/2:color=black,setsar=1`,
+    filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
     crop: false,
     pad: true,
     scale: true,
@@ -145,7 +142,7 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       crop: geometry.crop,
       pad: geometry.pad,
       reencodeVideo: true,
-      reencodeAudio: true,
+      reencodeAudio: request.quality !== "quality",
     },
     filter: geometry.filter,
     warnings,
