@@ -40,6 +40,9 @@ interface VideoStore {
   reset: () => void;
 }
 
+let activeUsageRecordId: string | null = null;
+let activeUsageUserId: string | null = null;
+
 function getAuthUserId(): string | null {
   try {
     const raw = localStorage.getItem("auth-storage");
@@ -48,6 +51,25 @@ function getAuthUserId(): string | null {
     return parsed.state?.user?.id ?? null;
   } catch {
     return null;
+  }
+}
+
+async function releaseUsageReservation(): Promise<void> {
+  if (!activeUsageRecordId || !activeUsageUserId) return;
+
+  const recordId = activeUsageRecordId;
+  const userId = activeUsageUserId;
+  activeUsageRecordId = null;
+  activeUsageUserId = null;
+
+  try {
+    await fetch("http://localhost:3000/api/usage/fail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, recordId }),
+    });
+  } catch (error) {
+    console.error("Failed to release usage reservation:", error);
   }
 }
 
@@ -113,6 +135,8 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       }
 
       usageRecordId = typeof data.recordId === "string" ? data.recordId : null;
+      activeUsageRecordId = usageRecordId;
+      activeUsageUserId = usageRecordId ? userId : null;
     } catch (err) {
       console.error("Usage validation failed:", err);
       alert("Серверге қосылу мүмкін болмады. Видеоны қазір өңдеу мүмкін емес.");
@@ -137,6 +161,8 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       set({ renderedPath: result.outputPath });
 
       if (usageRecordId) {
+        activeUsageRecordId = null;
+        activeUsageUserId = null;
         await fetch("http://localhost:3000/api/usage/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -145,18 +171,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       }
     } catch (err) {
       console.error("Render failed:", err);
-
-      if (usageRecordId) {
-        try {
-          await fetch("http://localhost:3000/api/usage/fail", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ userId, recordId: usageRecordId }),
-          });
-        } catch (usageError) {
-          console.error("Failed to release usage reservation:", usageError);
-        }
-      }
+      await releaseUsageReservation();
     } finally {
       unsubscribe();
       set({ isRendering: false });
@@ -179,10 +194,12 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
 
   cancelRender: async () => {
     await window.electronAPI.cancelRender();
+    await releaseUsageReservation();
     set({ isRendering: false, progress: null, renderedPath: null, metrics: null });
   },
 
-  reset: () =>
+  reset: () => {
+    void releaseUsageReservation();
     set({
       filePath: null,
       metadata: null,
@@ -192,5 +209,6 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       progress: null,
       metrics: null,
       isEvaluatingQuality: false,
-    }),
+    });
+  },
 }));
