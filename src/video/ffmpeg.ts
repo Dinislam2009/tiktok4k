@@ -112,7 +112,7 @@ export class FFmpegRenderer {
         }
 
         onProgress?.({
-          percent: 95, // 95% - FFmpeg аяқталды, 5% - MP4 Binary Patching
+          percent: 95,
           frame: lastProgress?.frame ?? 0,
           fps: lastProgress?.fps ?? 0,
           bitrate: lastProgress?.bitrate ?? "N/A",
@@ -135,7 +135,6 @@ export class FFmpegRenderer {
     if (existsSync(options.outputPath))
       throw new Error(`Output file already exists: ${options.outputPath}`);
 
-    // Уақытша файл жолы (.tmp.mp4)
     const tempOutputPath = `${options.outputPath}.tmp.mp4`;
     this.currentTempPath = tempOutputPath;
 
@@ -143,6 +142,9 @@ export class FFmpegRenderer {
     const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
     const preset = options.preset ?? (options.quality === "quality" ? "veryslow" : "medium");
     const crf = options.crf ?? plan.output.crf;
+
+    // Оригинал форматты сақтап, тек пиксель өлшемін жұп сандарға келтіру фильтрі
+    const originalAspectFilter = "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p";
 
     const commonArgs = [
       "-hide_banner",
@@ -156,7 +158,7 @@ export class FFmpegRenderer {
       "-map_metadata",
       "0",
       "-vf",
-      plan.filter,
+      originalAspectFilter,
       "-c:v",
       encoder,
       "-preset",
@@ -230,14 +232,12 @@ export class FFmpegRenderer {
         );
       }
 
-      // PHASE 6: MP4 Binary Patching (FastStart + Safe NAL/SEI Clean)
       await this.patcher.patch({
         inputPath: tempOutputPath,
         outputPath: options.outputPath,
         stripAud: options.stripAud ?? true,
       });
 
-      // Уақытша файлды тазалау
       this.cleanupPartialFile();
 
       onProgress?.({
