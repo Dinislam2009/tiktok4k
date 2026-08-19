@@ -35,6 +35,7 @@ const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
 const MIN_SSIM = 0.99;
 const MIN_PSNR_DB = 40;
+const METRIC_TIMEOUT_MS = 120_000;
 
 function getBinary(): string {
   const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
@@ -71,18 +72,18 @@ function buildReferenceFilter(): string {
   return [
     `[0:v]${cropFilter},fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[reference]`,
     `[1:v]fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[encoded]`,
+    `[reference]split=2[reference_ssim][reference_psnr]`,
+    `[encoded]split=2[encoded_ssim][encoded_psnr]`,
+    `[reference_ssim][encoded_ssim]ssim=stats_file=-[ssim_out]`,
+    `[reference_psnr][encoded_psnr]psnr=stats_file=-[psnr_out]`,
   ].join(";");
 }
 
-async function runMetric(
-  sourcePath: string,
-  outputPath: string,
-  metric: "ssim" | "psnr",
-): Promise<{ value: number | null; code: number | null }> {
+async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
   const ffmpeg = getBinary();
-  const filter = `${buildReferenceFilter()};[reference][encoded]${metric}=stats_file=-`;
+  const filter = buildReferenceFilter();
 
-  return await new Promise((resolve) => {
+  return await new Promise<QualityMetrics>((resolve) => {
     const child = spawn(
       ffmpeg,
       [
@@ -91,6 +92,9 @@ async function runMetric(
         "-i", sourcePath,
         "-i", outputPath,
         "-filter_complex", filter,
+        "-map", "[ssim_out]",
+        "-map", "[psnr_out]",
+        "-an",
         "-f", "null",
         "NUL",
       ],
@@ -98,47 +102,67 @@ async function runMetric(
     );
 
     let stderr = "";
+    let settled = false;
+
+    const finish = (metrics: QualityMetrics) => {
+      if (settled) return;
+      settled = true;
+      resolve(metrics);
+    };
+
+    const timeout = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        // Process may already have exited.
+      }
+      finish({
+        ssim: null,
+        psnr: null,
+        vmaf: null,
+        note: `FFmpeg quality comparison timed out after ${METRIC_TIMEOUT_MS / 1000} seconds.`,
+      });
+    }, METRIC_TIMEOUT_MS);
+
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
       if (stderr.length > 300000) stderr = stderr.slice(-300000);
     });
-    child.on("error", () => resolve({ value: null, code: null }));
-    child.on("close", (code) => {
-      resolve({
-        value: parseMetric(stderr, metric === "ssim" ? "SSIM" : "PSNR"),
-        code,
+
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      finish({
+        ssim: null,
+        psnr: null,
+        vmaf: null,
+        note: `FFmpeg quality comparison could not start: ${error.message}`,
       });
     });
+
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+
+      const ssim = parseMetric(stderr, "SSIM");
+      const psnr = parseMetric(stderr, "PSNR");
+      const successful: string[] = [];
+      const failures: string[] = [];
+
+      if (ssim !== null) successful.push(`SSIM ${ssim.toFixed(6)}`);
+      else failures.push("SSIM");
+
+      if (psnr !== null) successful.push(`PSNR ${psnr.toFixed(3)} dB`);
+      else failures.push("PSNR");
+
+      let note =
+        "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform, with both streams normalized to 30 fps and a 1/30 timebase.";
+      if (successful.length > 0) note += ` ${successful.join("; ")}.`;
+      if (failures.length > 0) note += ` Could not parse: ${failures.join(", ")}; FFmpeg exit ${code ?? "error"}.`;
+      note += " VMAF is disabled for this validator.";
+
+      finish({ ssim, psnr, vmaf: null, note });
+    });
   });
-}
-
-async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
-  // SSIM and PSNR are deterministic and available in the bundled FFmpeg.
-  // Do not run libvmaf here: the Windows build may require an external model
-  // and can make the quality command appear frozen.
-  const ssimResult = await runMetric(sourcePath, outputPath, "ssim");
-  const psnrResult = await runMetric(sourcePath, outputPath, "psnr");
-
-  const successful: string[] = [];
-  if (ssimResult.value !== null) successful.push(`SSIM ${ssimResult.value.toFixed(6)}`);
-  if (psnrResult.value !== null) successful.push(`PSNR ${psnrResult.value.toFixed(3)} dB`);
-
-  const failures: string[] = [];
-  if (ssimResult.value === null) failures.push(`SSIM (exit ${ssimResult.code ?? "error"})`);
-  if (psnrResult.value === null) failures.push(`PSNR (exit ${psnrResult.code ?? "error"})`);
-
-  let note = "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform, with both streams normalized to 30 fps and a 1/30 timebase.";
-  if (successful.length > 0) note += ` ${successful.join("; ")}.`;
-  if (failures.length > 0) note += ` Could not parse: ${failures.join(", ")}.`;
-  note += " VMAF is disabled for this validator.";
-
-  return {
-    ssim: ssimResult.value,
-    psnr: psnrResult.value,
-    vmaf: null,
-    note,
-  };
 }
 
 export async function validateOutput(
