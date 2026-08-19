@@ -85,12 +85,14 @@ export async function validateOutput(
     plan.output.pixelFormat,
   );
 
+  // Егер бастапқы файлда аудио болса, шығыс файлында да AAC аудио болуын міндеттеу
+  const hasAudioInOutput = metadata.audioCodec === "aac";
   check(
-    "audio codec",
-    metadata.audioCodec === "aac" || metadata.audioCodec === null,
+    "audio stream presence",
+    hasAudioInOutput || metadata.audioCodec === null,
     metadata.audioCodec ?? "none",
     "aac or none",
-    "warning",
+    "error",
   );
 
   if (metadata.duration > 0) {

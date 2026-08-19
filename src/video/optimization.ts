@@ -45,28 +45,29 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
-  const frameFactor = clamp(fps / 30, 1, 2);
+  const frameFactor = clamp(fps / 30, 1, 1.5);
 
-  // Quality mode is the highest-quality social-upload master. CRF is the
-  // primary quality control; the veryslow preset is used by the renderer so
-  // x264 can spend more analysis time preserving difficult details.
-  const crfBase = quality === "quality" ? 10 : quality === "size" ? 24 : 20;
-  const crf = codec === "libx265" ? crfBase + 5 : crfBase;
+  const crfBase = quality === "quality" ? 12 : quality === "size" ? 24 : 20;
+  const crf = codec === "libx265" ? crfBase + 4 : crfBase;
 
-  const minBase = quality === "quality" ? 10000 : quality === "size" ? 2000 : 4500;
-  const targetBase = quality === "quality" ? 12000 : quality === "size" ? 3000 : 6000;
-  const maxBase = quality === "quality" ? 20000 : quality === "size" ? 5000 : 9000;
+  const minBase = quality === "quality" ? 8000 : quality === "size" ? 2000 : 4500;
+  const targetBase = quality === "quality" ? 10000 : quality === "size" ? 3000 : 6000;
+  const maxBase = quality === "quality" ? 14000 : quality === "size" ? 5000 : 9000;
 
+  // TikTok/Reels үшін максималды битрейтті 16 Mbps-пен шектеу
   const minVideoBitrateKbps = Math.round(minBase * frameFactor);
-  const videoBitrateKbps = Math.round(targetBase * frameFactor);
-  const maxVideoBitrateKbps = Math.round(maxBase * frameFactor);
+  const videoBitrateKbps = clamp(Math.round(targetBase * frameFactor), 2000, 14000);
+  const maxVideoBitrateKbps = clamp(Math.round(maxBase * frameFactor), 4000, 16000);
+
+  // Буферді maxrate-тен 1.2 есе қылып ұстау
+  const bufferSizeKbps = Math.round(maxVideoBitrateKbps * 1.2);
 
   return {
     crf,
     minVideoBitrateKbps,
     videoBitrateKbps,
     maxVideoBitrateKbps,
-    bufferSizeKbps: maxVideoBitrateKbps * 2,
+    bufferSizeKbps,
   };
 }
 
@@ -91,7 +92,7 @@ function buildFilter(sourceWidth: number, sourceHeight: number, framing: Framing
   }
 
   return {
-    filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+    filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-ih)/2:(oh-ih)/2:color=black,setsar=1`,
     crop: false,
     pad: true,
     scale: true,

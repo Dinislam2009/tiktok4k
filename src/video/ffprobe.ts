@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { app } from "electron";
 
 interface FFProbeStream {
   codec_type?: string;
@@ -45,7 +46,11 @@ interface FFProbePacketOutput {
 
 function getFFprobePath(): string {
   const executableName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
-  const executablePath = path.resolve(process.cwd(), "binaries", "ffmpeg", executableName);
+  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app?.isPackaged;
+
+  const executablePath = isDev
+    ? path.resolve(process.cwd(), "binaries", "ffmpeg", executableName)
+    : path.resolve(process.resourcesPath, "binaries", "ffmpeg", executableName);
 
   if (!existsSync(executablePath)) {
     throw new Error(`FFprobe not found: ${executablePath}`);

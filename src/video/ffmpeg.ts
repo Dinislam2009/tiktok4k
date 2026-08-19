@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { analyzeVideo } from "./analyzer.js";
 import { createOptimizationPlan, type OptimizationRequest } from "./optimization.js";
@@ -16,8 +16,16 @@ export interface RenderProgress { percent: number; frame: number; fps: number; b
 export interface RenderResult { outputPath: string; duration: number; }
 
 function getBinary(): string {
-  const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
-  if (!existsSync(executable)) throw new Error(`FFmpeg binary not found: ${executable}`);
+  // Development немесе Production (app.asar.unpacked) ортасын тексеру
+  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app?.isPackaged;
+  
+  const executable = isDev
+    ? path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe")
+    : path.resolve(process.resourcesPath, "binaries", "ffmpeg", "ffmpeg.exe");
+
+  if (!existsSync(executable)) {
+    throw new Error(`FFmpeg binary not found: ${executable}`);
+  }
   return executable;
 }
 
@@ -30,6 +38,7 @@ function parseTime(value?: string): number {
 
 export class FFmpegRenderer {
   private process: ChildProcessWithoutNullStreams | null = null;
+  private currentOutputPath: string | null = null;
 
   private run(args: string[], metadata: VideoMetadata, onProgress?: (progress: RenderProgress) => void): Promise<void> {
     this.process = spawn(getBinary(), args, { windowsHide: true });
@@ -66,13 +75,17 @@ export class FFmpegRenderer {
         stderr += chunk;
         if (stderr.length > 20000) stderr = stderr.slice(-20000);
       });
+
       this.process!.on("error", (error) => {
         this.process = null;
+        this.cleanupPartialFile();
         reject(new Error(`Failed to start FFmpeg: ${error.message}`));
       });
+
       this.process!.on("close", (code) => {
         this.process = null;
         if (code !== 0) {
+          this.cleanupPartialFile();
           reject(new Error(`FFmpeg exited with code ${code}.\n${stderr.trim()}`));
           return;
         }
@@ -84,6 +97,7 @@ export class FFmpegRenderer {
           outTimeSeconds: metadata.duration,
           speed: lastProgress?.speed ?? "N/A",
         });
+        this.currentOutputPath = null;
         resolve();
       });
     });
@@ -94,6 +108,8 @@ export class FFmpegRenderer {
     if (metadata.duration <= 0) throw new Error("Cannot render a video with unknown or zero duration.");
     if (existsSync(options.outputPath)) throw new Error(`Output file already exists: ${options.outputPath}`);
 
+    this.currentOutputPath = options.outputPath;
+
     const plan = createOptimizationPlan(metadata, options);
     const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
     const preset = options.preset ?? (options.quality === "quality" ? "veryslow" : "medium");
@@ -102,6 +118,7 @@ export class FFmpegRenderer {
     const commonArgs = [
       "-hide_banner", "-y", "-i", options.inputPath,
       "-map", "0:v:0", "-map", "0:a:0?",
+      "-map_metadata", "0",
       "-vf", plan.filter,
       "-c:v", encoder,
       "-preset", preset,
@@ -111,9 +128,6 @@ export class FFmpegRenderer {
 
     const audioArgs = options.quality === "quality"
       ? [
-          // Quality exports must not destroy an already-good AAC source.
-          // This FFmpeg build reports ~12 kb/s even when asked for 192k AAC,
-          // while stream copy preserves the original 192 kb/s AAC exactly.
           "-c:a", "copy",
           "-movflags", "+faststart",
         ]
@@ -124,10 +138,6 @@ export class FFmpegRenderer {
         ];
 
     if (options.quality === "quality" && encoder === "libx264") {
-      // Quality mode is a visual-quality master, not a file-size target.
-      // CRF is the primary quality control. The veryslow preset gives x264
-      // more analysis time so it can preserve detail more efficiently at the
-      // same CRF. VBV only caps bitrate spikes for a practical social upload.
       await this.run([
         ...commonArgs,
         ...audioArgs,
@@ -161,9 +171,21 @@ export class FFmpegRenderer {
     return { outputPath: options.outputPath, duration: metadata.duration };
   }
 
+  private cleanupPartialFile(): void {
+    if (this.currentOutputPath && existsSync(this.currentOutputPath)) {
+      try {
+        unlinkSync(this.currentOutputPath);
+      } catch {
+        // Уақытша файлды өшіру кезіндегі қатені елемеу
+      }
+      this.currentOutputPath = null;
+    }
+  }
+
   cancel(): void {
     if (!this.process) return;
     this.process.kill();
     this.process = null;
+    this.cleanupPartialFile();
   }
 }

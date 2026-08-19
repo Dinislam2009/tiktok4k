@@ -33,26 +33,31 @@ const TARGET_HEIGHT = 1920;
 const TARGET_FPS = 30;
 const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
+
 const MIN_SSIM = 0.99;
 const MIN_PSNR_DB = 40;
-const METRIC_TIMEOUT_MS = 120_000;
+const MIN_VMAF = 90.0;
+const METRIC_TIMEOUT_MS = 240_000; // 4 минут терең талдау үшін
+
+const NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
 
 function getBinary(): string {
-  const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe");
+  const binaryName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const executable = path.resolve(process.cwd(), "binaries", "ffmpeg", binaryName);
   if (!existsSync(executable)) throw new Error(`FFmpeg binary not found: ${executable}`);
   return executable;
 }
 
-function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
-  const patterns = name === "SSIM"
-    ? [
-        /SSIM\s+Y:[^\n]*?All:\s*([0-9.]+)/i,
-        /All:\s*([0-9.]+)/i,
-      ]
-    : [
-        /PSNR\s+y:[^\n]*?average:\s*([0-9.]+)/i,
-        /PSNR[^\n]*?average:\s*([0-9.]+)/i,
-      ];
+function parseMetricValue(stderr: string, type: "SSIM" | "PSNR" | "VMAF"): number | null {
+  let patterns: RegExp[] = [];
+
+  if (type === "SSIM") {
+    patterns = [/SSIM\s+[Yy]:[^\n]*?All:\s*([0-9.]+)/i, /All:\s*([0-9.]+)/i];
+  } else if (type === "PSNR") {
+    patterns = [/PSNR\s+[yY]:[^\n]*?average:\s*([0-9.]+)/i, /average:\s*([0-9.]+)/i];
+  } else if (type === "VMAF") {
+    patterns = [/VMAF\s+score:\s*([0-9.]+)/i, /vmaf[^\n]*?score:\s*([0-9.]+)/i, /mean:\s*([0-9.]+)/i];
+  }
 
   for (const pattern of patterns) {
     const match = stderr.match(pattern);
@@ -65,25 +70,23 @@ function parseMetric(stderr: string, name: "SSIM" | "PSNR"): number | null {
   return null;
 }
 
-const cropFilter =
-  `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1`;
-
-function buildReferenceFilter(): string {
-  return [
-    `[0:v]${cropFilter},fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[reference]`,
-    `[1:v]fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[encoded]`,
-    `[reference]split=2[reference_ssim][reference_psnr]`,
-    `[encoded]split=2[encoded_ssim][encoded_psnr]`,
-    `[reference_ssim][encoded_ssim]ssim=stats_file=-[ssim_out]`,
-    `[reference_psnr][encoded_psnr]psnr=stats_file=-[psnr_out]`,
-  ].join(";");
-}
-
-async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
+// SSIM & PSNR-ді 1 паста біріктіріп есептеу (уақытты 3 есе үнемдейді)
+async function runSsimPsnrPass(
+  sourcePath: string,
+  outputPath: string
+): Promise<{ ssim: number | null; psnr: number | null }> {
   const ffmpeg = getBinary();
-  const filter = buildReferenceFilter();
+  
+  const filterComplex = [
+    `[0:v]scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1,fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[ref]`,
+    `[1:v]fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[enc]`,
+    `[ref]split=2[r1][r2]`,
+    `[enc]split=2[e1][e2]`,
+    `[r1][e1]ssim[s_out]`,
+    `[r2][e2]psnr[p_out]`
+  ].join(";");
 
-  return await new Promise<QualityMetrics>((resolve) => {
+  return await new Promise((resolve) => {
     const child = spawn(
       ffmpeg,
       [
@@ -91,78 +94,113 @@ async function measureQuality(sourcePath: string, outputPath: string): Promise<Q
         "-nostdin",
         "-i", sourcePath,
         "-i", outputPath,
-        "-filter_complex", filter,
-        "-map", "[ssim_out]",
-        "-map", "[psnr_out]",
+        "-filter_complex", filterComplex,
+        "-map", "[s_out]",
+        "-map", "[p_out]",
         "-an",
         "-f", "null",
-        "NUL",
+        NULL_DEVICE,
       ],
-      { windowsHide: true },
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] }
     );
 
     let stderr = "";
-    let settled = false;
-
-    const finish = (metrics: QualityMetrics) => {
-      if (settled) return;
-      settled = true;
-      resolve(metrics);
-    };
-
-    const timeout = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        // Process may already have exited.
-      }
-      finish({
-        ssim: null,
-        psnr: null,
-        vmaf: null,
-        note: `FFmpeg quality comparison timed out after ${METRIC_TIMEOUT_MS / 1000} seconds.`,
-      });
-    }, METRIC_TIMEOUT_MS);
-
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       stderr += chunk;
       if (stderr.length > 300000) stderr = stderr.slice(-300000);
     });
 
-    child.on("error", (error) => {
+    const timeout = setTimeout(() => {
+      try { child.kill(); } catch {}
+      resolve({ ssim: null, psnr: null });
+    }, METRIC_TIMEOUT_MS);
+
+    child.on("close", () => {
       clearTimeout(timeout);
-      finish({
-        ssim: null,
-        psnr: null,
-        vmaf: null,
-        note: `FFmpeg quality comparison could not start: ${error.message}`,
-      });
+      const ssim = parseMetricValue(stderr, "SSIM");
+      const psnr = parseMetricValue(stderr, "PSNR");
+      resolve({ ssim, psnr });
     });
 
-    child.on("close", (code) => {
+    child.on("error", () => {
       clearTimeout(timeout);
-
-      const ssim = parseMetric(stderr, "SSIM");
-      const psnr = parseMetric(stderr, "PSNR");
-      const successful: string[] = [];
-      const failures: string[] = [];
-
-      if (ssim !== null) successful.push(`SSIM ${ssim.toFixed(6)}`);
-      else failures.push("SSIM");
-
-      if (psnr !== null) successful.push(`PSNR ${psnr.toFixed(3)} dB`);
-      else failures.push("PSNR");
-
-      let note =
-        "Metrics compare the encoded video against the source after applying the same 9:16 crop/scale transform, with both streams normalized to 30 fps and a 1/30 timebase.";
-      if (successful.length > 0) note += ` ${successful.join("; ")}.`;
-      if (failures.length > 0) note += ` Could not parse: ${failures.join(", ")}; FFmpeg exit ${code ?? "error"}.`;
-      note += " VMAF is disabled for this validator.";
-
-      finish({ ssim, psnr, vmaf: null, note });
+      resolve({ ssim: null, psnr: null });
     });
   });
+}
+
+// VMAF есептеу (жеке пасс)
+async function runVmafPass(
+  sourcePath: string,
+  outputPath: string
+): Promise<number | null> {
+  const ffmpeg = getBinary();
+  
+  const filterComplex = [
+    `[0:v]scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1,fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[ref]`,
+    `[1:v]fps=${TARGET_FPS},settb=1/${TARGET_FPS},setpts=PTS-STARTPTS[enc]`,
+    `[ref][enc]libvmaf[out]`
+  ].join(";");
+
+  return await new Promise((resolve) => {
+    const child = spawn(
+      ffmpeg,
+      [
+        "-hide_banner",
+        "-nostdin",
+        "-i", sourcePath,
+        "-i", outputPath,
+        "-filter_complex", filterComplex,
+        "-map", "[out]",
+        "-an",
+        "-f", "null",
+        NULL_DEVICE,
+      ],
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] }
+    );
+
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      if (stderr.length > 300000) stderr = stderr.slice(-300000);
+    });
+
+    const timeout = setTimeout(() => {
+      try { child.kill(); } catch {}
+      resolve(null);
+    }, METRIC_TIMEOUT_MS);
+
+    child.on("close", () => {
+      clearTimeout(timeout);
+      const vmaf = parseMetricValue(stderr, "VMAF");
+      resolve(vmaf);
+    });
+
+    child.on("error", () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+  });
+}
+
+async function measureQuality(sourcePath: string, outputPath: string): Promise<QualityMetrics> {
+  console.log("⏳ [1/2] SSIM & PSNR есептелуде...");
+  const { ssim, psnr } = await runSsimPsnrPass(sourcePath, outputPath);
+
+  console.log("⏳ [2/2] VMAF есептелуде (бұл 1-2 минут алуы мүмкін)...");
+  const vmaf = await runVmafPass(sourcePath, outputPath);
+
+  const notes: string[] = [
+    "Normalized both streams to 30 fps, 1/30 timebase, and matching 9:16 geometry before metric evaluation.",
+  ];
+
+  if (ssim !== null) notes.push(`SSIM: ${ssim.toFixed(6)}`);
+  if (psnr !== null) notes.push(`PSNR: ${psnr.toFixed(3)} dB`);
+  if (vmaf !== null) notes.push(`VMAF: ${vmaf.toFixed(2)}`);
+
+  return { ssim, psnr, vmaf, note: notes.join(" ") };
 }
 
 export async function validateOutput(
@@ -177,21 +215,15 @@ export async function validateOutput(
   const warnings: string[] = [];
 
   if (output.duration <= 0 || Math.abs(output.duration - source.duration) > DURATION_TOLERANCE) {
-    warnings.push(
-      `Duration changed unexpectedly: source ${source.duration.toFixed(3)}s, output ${output.duration.toFixed(3)}s.`,
-    );
+    warnings.push(`Duration changed unexpectedly: source ${source.duration.toFixed(3)}s, output ${output.duration.toFixed(3)}s.`);
   }
 
   if (output.width !== TARGET_WIDTH || output.height !== TARGET_HEIGHT) {
-    warnings.push(
-      `Unexpected output resolution: expected ${TARGET_WIDTH}x${TARGET_HEIGHT}, got ${output.width}x${output.height}.`,
-    );
+    warnings.push(`Unexpected output resolution: expected ${TARGET_WIDTH}x${TARGET_HEIGHT}, got ${output.width}x${output.height}.`);
   }
 
   if (Math.abs(output.fps - TARGET_FPS) > FPS_TOLERANCE) {
-    warnings.push(
-      `Unexpected output FPS: expected ${TARGET_FPS}, got ${output.fps}.`,
-    );
+    warnings.push(`Unexpected output FPS: expected ${TARGET_FPS}, got ${output.fps}.`);
   }
 
   if (output.videoCodec !== "h264" && output.videoCodec !== "hevc") {
@@ -199,15 +231,11 @@ export async function validateOutput(
   }
 
   if (output.pixelFormat !== "yuv420p") {
-    warnings.push(
-      `Unexpected output pixel format: ${output.pixelFormat ?? "unknown"}.`,
-    );
+    warnings.push(`Unexpected output pixel format: ${output.pixelFormat ?? "unknown"}.`);
   }
 
   if (output.audioCodec !== "aac") {
-    warnings.push(
-      `Unexpected output audio codec: ${output.audioCodec ?? "none"}.`,
-    );
+    warnings.push(`Unexpected output audio codec: ${output.audioCodec ?? "none"}.`);
   }
 
   if (source.audioCodec !== null && output.audioCodec === null) {
@@ -221,15 +249,21 @@ export async function validateOutput(
   const metrics = await measureQuality(sourcePath, outputPath);
 
   if (metrics.ssim === null) {
-    warnings.push("SSIM could not be measured.");
+    warnings.push("SSIM metric could not be calculated (null).");
   } else if (metrics.ssim < MIN_SSIM) {
-    warnings.push(`SSIM quality is below the minimum threshold: ${metrics.ssim.toFixed(6)} < ${MIN_SSIM}.`);
+    warnings.push(`SSIM quality is below threshold: ${metrics.ssim.toFixed(6)} < ${MIN_SSIM}.`);
   }
 
   if (metrics.psnr === null) {
-    warnings.push("PSNR could not be measured.");
+    warnings.push("PSNR metric could not be calculated (null).");
   } else if (metrics.psnr < MIN_PSNR_DB) {
-    warnings.push(`PSNR quality is below the minimum threshold: ${metrics.psnr.toFixed(3)} dB < ${MIN_PSNR_DB} dB.`);
+    warnings.push(`PSNR quality is below threshold: ${metrics.psnr.toFixed(3)} dB < ${MIN_PSNR_DB} dB.`);
+  }
+
+  if (metrics.vmaf === null) {
+    warnings.push("VMAF metric could not be calculated (null).");
+  } else if (metrics.vmaf < MIN_VMAF) {
+    warnings.push(`VMAF quality is below threshold: ${metrics.vmaf.toFixed(2)} < ${MIN_VMAF}.`);
   }
 
   return {
