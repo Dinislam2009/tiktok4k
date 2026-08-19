@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
+import { app } from "electron";
 import { analyzeVideo } from "./analyzer.js";
 import { createOptimizationPlan, type OptimizationRequest } from "./optimization.js";
 import type { VideoMetadata } from "./types.js";

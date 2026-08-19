@@ -18,7 +18,7 @@ fastify.post("/api/auth/request", async () => {
     data: { sessionId, expiresAt },
   });
 
-  const botUsername = "tiktokvideo4kbot"; // Өз ботыңның атын қой
+  const botUsername = "tiktokvideo4kbot"; // Ботыңыздың аты
 
   return {
     sessionId,
@@ -107,26 +107,12 @@ fastify.get("/api/user/status/:userId", async (request) => {
   };
 });
 
-const start = async () => {
-  try {
-    bot.start();
-    console.log("🤖 Telegram Bot іске қосылды!");
-
-    await fastify.listen({ port: Number(process.env.PORT) || 3000, host: "0.0.0.0" });
-    console.log(`🚀 Fastify API сервер іске қосылды!`);
-  } catch (err) {
-    fastify.log.error(err);
-    process.exit(1);
-  }
-};
-
-start();
 // 5. Видео рендер жасау лимитін тексеру және тіркеу
 fastify.post("/api/usage/record", async (request, reply) => {
   const { userId, deviceId } = request.body as { userId?: string; deviceId?: string };
 
   if (!userId) {
-    return reply.status(401).send({ error: "UNAUTHORIZED", message: "Видеоны оңтайландыру үшін Telegram арқылы кіріңіз." });
+    return reply.status(401).send({ error: "UNAUTHORIZED", message: "Видеоны оңтайландыру үшін Telegram арқылы кіриңіз." });
   }
 
   // Пайдаланушының тарифін тексеру
@@ -169,3 +155,19 @@ fastify.post("/api/usage/record", async (request, reply) => {
 
   return { status: "ALLOWED", remaining: 3 - (todayUsageCount + 1), recordId: record.id };
 });
+
+// Сервер мен Ботты іске қосу функциясы
+const start = async () => {
+  try {
+    bot.start();
+    console.log("🤖 Telegram Bot іске қосылды!");
+
+    await fastify.listen({ port: Number(process.env.PORT) || 3000, host: "0.0.0.0" });
+    console.log(`🚀 Fastify API сервер іске қосылды!`);
+  } catch (err) {
+    fastify.log.error(err);
+    process.exit(1);
+  }
+};
+
+start();
