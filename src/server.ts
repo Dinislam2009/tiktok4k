@@ -1,3 +1,4 @@
+import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { PrismaClient, Prisma } from "@prisma/client";
@@ -68,14 +69,10 @@ fastify.post("/api/devices/register", async (request, reply) => {
     platform?: string;
   };
 
-  if (!userId || !deviceId) {
-    return reply.status(400).send({ error: "INVALID_REQUEST" });
-  }
+  if (!userId || !deviceId) return reply.status(400).send({ error: "INVALID_REQUEST" });
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user) {
-    return reply.status(404).send({ error: "USER_NOT_FOUND" });
-  }
+  if (!user) return reply.status(404).send({ error: "USER_NOT_FOUND" });
 
   const existingDevice = await prisma.device.findUnique({ where: { deviceId } });
 
@@ -83,10 +80,7 @@ fastify.post("/api/devices/register", async (request, reply) => {
     if (existingDevice.userId !== userId) {
       return reply.status(403).send({ error: "DEVICE_OWNED_BY_ANOTHER_USER" });
     }
-
-    if (existingDevice.revokedAt) {
-      return reply.status(403).send({ error: "DEVICE_REVOKED" });
-    }
+    if (existingDevice.revokedAt) return reply.status(403).send({ error: "DEVICE_REVOKED" });
 
     const device = await prisma.device.update({
       where: { deviceId },
@@ -121,7 +115,6 @@ fastify.post("/api/devices/register", async (request, reply) => {
 
 fastify.get("/api/user/status/:userId", async (request, reply) => {
   const { userId } = request.params as { userId: string };
-
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return reply.status(404).send({ error: "USER_NOT_FOUND" });
 
@@ -130,11 +123,7 @@ fastify.get("/api/user/status/:userId", async (request, reply) => {
   });
 
   const plan = sub?.plan || "free";
-
-  return {
-    plan,
-    dailyLimit: plan === "pro_monthly" ? "Unlimited" : 3,
-  };
+  return { plan, dailyLimit: plan === "pro_monthly" ? "Unlimited" : 3 };
 });
 
 fastify.post("/api/usage/record", async (request, reply) => {
@@ -152,14 +141,8 @@ fastify.post("/api/usage/record", async (request, reply) => {
     return reply.status(403).send({ error: "INVALID_DEVICE" });
   }
 
-  const sub = await prisma.subscription.findFirst({
-    where: { userId, status: "active" },
-  });
-  const isPro = sub?.plan === "pro_monthly";
-
-  if (isPro) {
-    return { status: "ALLOWED", unlimited: true };
-  }
+  const sub = await prisma.subscription.findFirst({ where: { userId, status: "active" } });
+  if (sub?.plan === "pro_monthly") return { status: "ALLOWED", unlimited: true };
 
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
@@ -176,22 +159,13 @@ fastify.post("/api/usage/record", async (request, reply) => {
         },
       });
 
-      if (todayUsageCount >= 3) {
-        return null;
-      }
+      if (todayUsageCount >= 3) return null;
 
       const record = await tx.usageRecord.create({
-        data: {
-          userId,
-          deviceId,
-          status: "RUNNING",
-        },
+        data: { userId, deviceId, status: "RUNNING" },
       });
 
-      return {
-        recordId: record.id,
-        remaining: 3 - (todayUsageCount + 1),
-      };
+      return { recordId: record.id, remaining: 3 - (todayUsageCount + 1) };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     if (!result) {
@@ -235,11 +209,7 @@ fastify.post("/api/usage/fail", async (request, reply) => {
   if (!record || record.userId !== userId) return reply.status(404).send({ error: "USAGE_RECORD_NOT_FOUND" });
   if (record.status !== "RUNNING") return reply.status(409).send({ error: "USAGE_RECORD_NOT_RUNNING" });
 
-  await prisma.usageRecord.update({
-    where: { id: recordId },
-    data: { status: "FAILED" },
-  });
-
+  await prisma.usageRecord.update({ where: { id: recordId }, data: { status: "FAILED" } });
   return { status: "FAILED" };
 });
 
@@ -247,7 +217,6 @@ const start = async () => {
   try {
     bot.start();
     console.log("🤖 Telegram Bot іске қосылды!");
-
     await fastify.listen({ port: Number(process.env.PORT) || 3000, host: "0.0.0.0" });
     console.log("🚀 Fastify API сервер іске қосылды!");
   } catch (err) {
