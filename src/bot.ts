@@ -24,7 +24,7 @@ export const bot = new Bot(process.env.BOT_TOKEN || "", {
   },
 });
 
-// grammY барлық сұранысты (соның ішінде getFile) тек локальды серверге жіберуін қамтамасыз ету
+// grammY барлық сұранысты тек локальды серверге жіберуін қамтамасыз ету
 bot.api.config.use(async (prev, method, payload, signal) => {
   return await prev(method, payload, signal);
 });
@@ -260,7 +260,6 @@ bot.on(["message:document", "message:video"], async (ctx) => {
     );
   }
 
-  // 3. СТРОГО 500 МБ КӨЛЕМ ТЕКСЕРУ
   const fileSizeMB = doc.file_size ? doc.file_size / (1024 * 1024) : 0;
   if (fileSizeMB > 500) {
     return ctx.reply(
@@ -313,28 +312,37 @@ bot.on(["message:document", "message:video"], async (ctx) => {
   const outputPath = path.join(TEMP_DIR, `out_${usageRecord.id}${ext}`);
 
   try {
-    // 6. Local Bot API арқылы файлды жүктеу
     const file = await ctx.api.getFile(doc.file_id);
 
-    // Локальды сервер файлды тікелей локальды дискіге жүктеп қойса:
-    if (file.file_path && fs.existsSync(file.file_path)) {
-      fs.copyFileSync(file.file_path, inputPath);
+    const rawPath = file.file_path || "";
+    const possiblePaths = [
+      rawPath,
+      path.join(process.cwd(), "temp", rawPath),
+      path.join(process.cwd(), "temp", path.basename(rawPath)),
+    ];
+
+    let sourcePath = possiblePaths.find((p) => p && fs.existsSync(p));
+
+    if (sourcePath) {
+      fs.copyFileSync(sourcePath, inputPath);
     } else {
-      const fileUrl = `${LOCAL_API_URL}/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
-      const fileStream = fs.createWriteStream(inputPath);
+      const fileUrl = `${LOCAL_API_URL}/file/bot${process.env.BOT_TOKEN}/${rawPath}`;
       await new Promise((resolve, reject) => {
+        const fileStream = fs.createWriteStream(inputPath);
         http.get(fileUrl, (res) => {
+          if (res.statusCode !== 200) {
+            return reject(new Error(`Failed to download file, HTTP status code: ${res.statusCode}`));
+          }
           res.pipe(fileStream);
           fileStream.on("finish", () => {
             fileStream.close();
             resolve(true);
           });
           fileStream.on("error", reject);
-        });
+        }).on("error", reject);
       });
     }
 
-    // 7. FFmpeg 4K Patch & Progress
     let lastEditTime = Date.now();
 
     await new Promise((resolve, reject) => {
@@ -366,7 +374,6 @@ bot.on(["message:document", "message:video"], async (ctx) => {
         .save(outputPath);
     });
 
-    // 8. Дайын 4K файлды қайтару (документ ретінде)
     await ctx.api.editMessageText(
       ctx.chat.id,
       statusMsg.message_id,
@@ -409,11 +416,13 @@ bot.on(["message:document", "message:video"], async (ctx) => {
   }
 });
 
+// Ботты іске қосу
+console.log("⏳ Бот іске қосылуда...");
+
 bot.start({
-  onStart: async () => {
-    await bot.api.setChatMenuButton({
-      menu_button: { type: "default" },
-    }).catch(() => {});
-    console.log("🤖 TIKTOK 4K боты іске қосылды!");
+  onStart: () => {
+    console.log("🤖 TIKTOK 4K боты сәтті іске қосылды!");
   },
+}).catch((err) => {
+  console.error("Ботты қосу кезінде қате шықты:", err);
 });

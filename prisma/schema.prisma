@@ -3,52 +3,29 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
-  id            String         @id @default(uuid())
-  telegramId    BigInt         @unique
-  username      String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  devices       Device[]
-  authSessions  AuthSession[]
+  id           String        @id @default(uuid())
+  telegramId   BigInt        @unique
+  username     String?
+  language     String        @default("kk") // 'kk' немесе 'ru'
+  bonusLimit   Int           @default(0)    // Рефералдардан келген бонус
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
   subscriptions Subscription[]
   usageRecords  UsageRecord[]
-}
-
-model Device {
-  id         String    @id @default(uuid())
-  userId     String
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceId   String    @unique
-  name       String?
-  platform   String?
-  appVersion String?
-  lastSeenAt DateTime  @default(now())
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-}
-
-model AuthSession {
-  id         String    @id @default(uuid())
-  sessionId  String    @unique
-  status     String    @default("PENDING") // PENDING, APPROVED, EXPIRED
-  telegramId BigInt?
-  userId     String?
-  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt  DateTime
-  createdAt  DateTime  @default(now())
-  approvedAt DateTime?
 }
 
 model Subscription {
   id        String    @id @default(uuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan      String    @default("free") // free, pro_monthly
+  plan      String    @default("free") // free, pro
   status    String    @default("active")
   startedAt DateTime  @default(now())
   expiresAt DateTime?
@@ -57,12 +34,11 @@ model Subscription {
 }
 
 model UsageRecord {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceId    String
-  status      String   @default("RUNNING") // RUNNING, COMPLETED, FAILED
-  createdAt   DateTime @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status      String    @default("RUNNING") // RUNNING, COMPLETED, FAILED
+  createdAt   DateTime  @default(now())
   completedAt DateTime?
 
   @@index([userId, createdAt])
