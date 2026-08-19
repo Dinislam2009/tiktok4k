@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://tiktok4k.onrender.com";
+
 interface User {
   id: string;
   telegramId: string;
@@ -60,7 +62,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   registerCurrentDevice: async (userId: string) => {
     try {
       const deviceId = getOrCreateDeviceId();
-      const deviceRes = await fetch("http://localhost:3000/api/devices/register", {
+      const deviceRes = await fetch(`${API_URL}/api/devices/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, deviceId, name: "Windows Desktop", platform: "Windows" }),
@@ -71,7 +73,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         throw new Error(deviceData.message || deviceData.error || "Device registration failed");
       }
 
-      const res = await fetch(`http://localhost:3000/api/user/status/${userId}`);
+      const res = await fetch(`${API_URL}/api/user/status/${userId}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.message || data.error || "Failed to load user status");
@@ -88,7 +90,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     set({ isAuthenticating: true, botUrl: null });
 
     try {
-      const res = await fetch("http://localhost:3000/api/auth/request", { method: "POST" });
+      const res = await fetch(`${API_URL}/api/auth/request`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || typeof data.sessionId !== "string" || typeof data.botUrl !== "string") {
@@ -96,7 +98,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
 
       set({ botUrl: data.botUrl });
-      if (window.electronAPI?.openExternal) await window.electronAPI.openExternal(data.botUrl);
+
+      if (window.electronAPI?.openExternal) {
+        await window.electronAPI.openExternal(data.botUrl);
+      } else {
+        window.open(data.botUrl, "_blank");
+      }
 
       const startedAt = Date.now();
       const interval = window.setInterval(async () => {
@@ -107,7 +114,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         }
 
         try {
-          const checkRes = await fetch(`http://localhost:3000/api/auth/session/${data.sessionId}`);
+          const checkRes = await fetch(`${API_URL}/api/auth/session/${data.sessionId}`);
 
           if (checkRes.status === 410) {
             window.clearInterval(interval);
@@ -117,7 +124,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
           const checkData = await checkRes.json().catch(() => ({}));
 
-          if (checkData.status === "APPROVED" && checkData.user?.id) {
+          if ((checkData.status === "APPROVED" || checkData.status === "authenticated") && checkData.user?.id) {
             window.clearInterval(interval);
             const user = checkData.user as User;
             persistAuth(user);

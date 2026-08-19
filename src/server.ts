@@ -10,6 +10,11 @@ const prisma = new PrismaClient();
 
 await fastify.register(cors, { origin: true });
 
+// Render Health Check маршруты (404 қатесін болдырмау үшін)
+fastify.get("/", async () => {
+  return { status: "ok", message: "TikTok 4K API is running" };
+});
+
 fastify.post("/api/auth/request", async () => {
   const sessionId = randomUUID();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
@@ -47,7 +52,8 @@ fastify.get("/api/auth/session/:id", async (request, reply) => {
     return reply.status(410).send({ error: "SESSION_EXPIRED" });
   }
 
-  if (session.status === "APPROVED" && session.user) {
+  // "APPROVED" немесе "authenticated" мәндерінің екеуін де қолдау
+  if ((session.status === "APPROVED" || session.status === "authenticated") && session.user) {
     return {
       status: "APPROVED",
       user: {
@@ -215,8 +221,11 @@ fastify.post("/api/usage/fail", async (request, reply) => {
 
 const start = async () => {
   try {
-    bot.start();
-    console.log("🤖 Telegram Bot іске қосылды!");
+    bot.start().catch((err) => {
+      console.error("Telegram Bot іске қосу кезіндегі қателік:", err.message);
+    });
+    console.log("🤖 Telegram Bot ортасы бапталды!");
+
     await fastify.listen({ port: Number(process.env.PORT) || 3000, host: "0.0.0.0" });
     console.log("🚀 Fastify API сервер іске қосылды!");
   } catch (err) {

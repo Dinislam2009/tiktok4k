@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+const API_URL = import.meta.env.VITE_API_URL || "https://tiktok4k.onrender.com";
+
 export interface RenderProgress {
   percent: number;
   frame: number;
@@ -63,7 +65,7 @@ async function releaseUsageReservation(): Promise<void> {
   activeUsageUserId = null;
 
   try {
-    await fetch("http://localhost:3000/api/usage/fail", {
+    await fetch(`${API_URL}/api/usage/fail`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId, recordId }),
@@ -94,7 +96,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
   analyze: async (filePath: string) => {
     set({ isAnalyzing: true, filePath, metadata: null, renderedPath: null, metrics: null });
     try {
-      const data = await window.electronAPI.analyzeVideo(filePath);
+      const data = await window.electronAPI?.analyzeVideo(filePath);
       set({ metadata: data as Record<string, unknown>, isAnalyzing: false });
     } catch (err) {
       console.error("Analysis failed:", err);
@@ -122,7 +124,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
     let usageRecordId: string | null = null;
 
     try {
-      const res = await fetch("http://localhost:3000/api/usage/record", {
+      const res = await fetch(`${API_URL}/api/usage/record`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, deviceId }),
@@ -145,12 +147,12 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
 
     set({ isRendering: true, progress: null, renderedPath: null, metrics: null });
 
-    const unsubscribe = window.electronAPI.onProgress((progressData) => {
+    const unsubscribe = window.electronAPI?.onProgress((progressData) => {
       set({ progress: progressData as unknown as RenderProgress });
     });
 
     try {
-      const result = (await window.electronAPI.renderVideo({
+      const result = (await window.electronAPI?.renderVideo({
         inputPath: filePath,
         outputPath,
         target,
@@ -158,12 +160,12 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
         framing,
       })) as { outputPath: string };
 
-      set({ renderedPath: result.outputPath });
+      set({ renderedPath: result?.outputPath });
 
       if (usageRecordId) {
         activeUsageRecordId = null;
         activeUsageUserId = null;
-        await fetch("http://localhost:3000/api/usage/complete", {
+        await fetch(`${API_URL}/api/usage/complete`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId, recordId: usageRecordId }),
@@ -173,7 +175,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       console.error("Render failed:", err);
       await releaseUsageReservation();
     } finally {
-      unsubscribe();
+      if (unsubscribe) unsubscribe();
       set({ isRendering: false });
     }
   },
@@ -184,7 +186,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
 
     set({ isEvaluatingQuality: true });
     try {
-      const res = await window.electronAPI.evaluateQuality(filePath, renderedPath);
+      const res = await window.electronAPI?.evaluateQuality(filePath, renderedPath);
       set({ metrics: res, isEvaluatingQuality: false });
     } catch (err) {
       console.error("Quality evaluation failed:", err);
@@ -193,7 +195,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
   },
 
   cancelRender: async () => {
-    await window.electronAPI.cancelRender();
+    await window.electronAPI?.cancelRender();
     await releaseUsageReservation();
     set({ isRendering: false, progress: null, renderedPath: null, metrics: null });
   },
