@@ -9,8 +9,14 @@ export interface QualityMetricsResult {
   vmaf: number;
 }
 
+const WIDTH = 1080;
+const HEIGHT = 1920;
+const FPS = 30;
+const TIMEOUT_MS = 240_000;
+const NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
+
 function getFFmpegBinary(): string {
-  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app?.isPackaged;
+  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app.isPackaged;
   const executable = isDev
     ? path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe")
     : path.resolve(process.resourcesPath, "binaries", "ffmpeg", "ffmpeg.exe");
@@ -21,52 +27,108 @@ function getFFmpegBinary(): string {
   return executable;
 }
 
+function parseMetric(stderr: string, type: "SSIM" | "PSNR" | "VMAF"): number | null {
+  const patterns = type === "SSIM"
+    ? [
+        /SSIM\s+Y:[^\n]*?All:\s*([0-9.]+)/i,
+        /All:\s*([0-9.]+)/i,
+      ]
+    : type === "PSNR"
+      ? [
+          /PSNR\s+y:[^\n]*?average:\s*([0-9.]+)/i,
+          /average:\s*([0-9.]+)/i,
+        ]
+      : [
+          /VMAF\s+score:\s*([0-9.]+)/i,
+          /VMAF[^\n]*?score[:=]\s*([0-9.]+)/i,
+          /mean[:=]\s*([0-9.]+)/i,
+        ];
+
+  for (const pattern of patterns) {
+    const match = stderr.match(pattern);
+    if (match?.[1]) {
+      const value = Number(match[1]);
+      if (Number.isFinite(value)) return value;
+    }
+  }
+  return null;
+}
+
 export async function calculateMetrics(
   sourcePath: string,
-  outputPath: string
+  outputPath: string,
 ): Promise<QualityMetricsResult> {
-  return new Promise((resolve) => {
-    try {
-      const ffmpegPath = getFFmpegBinary();
+  const ffmpegPath = getFFmpegBinary();
+  const filter = [
+    `[0:v]scale=${WIDTH}:${HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${WIDTH}:${HEIGHT},setsar=1,fps=${FPS},settb=1/${FPS},setpts=PTS-STARTPTS[ref]`,
+    `[1:v]fps=${FPS},settb=1/${FPS},setpts=PTS-STARTPTS[enc]`,
+    `[ref]split=3[r1][r2][r3]`,
+    `[enc]split=3[e1][e2][e3]`,
+    `[r1][e1]ssim[ssim_out]`,
+    `[r2][e2]psnr[psnr_out]`,
+    `[r3][e3]libvmaf[vmaf_out]`,
+  ].join(";");
 
-      const filter = `[0:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[main];[1:v]scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[ref];[main][ref]ssim;[main][ref]psnr`;
-
-      const args = [
+  return await new Promise<QualityMetricsResult>((resolve, reject) => {
+    const proc = spawn(
+      ffmpegPath,
+      [
         "-hide_banner",
-        "-i", outputPath,
+        "-nostdin",
         "-i", sourcePath,
+        "-i", outputPath,
         "-filter_complex", filter,
+        "-map", "[ssim_out]",
+        "-map", "[psnr_out]",
+        "-map", "[vmaf_out]",
+        "-an",
         "-f", "null",
-        "-",
-      ];
+        NULL_DEVICE,
+      ],
+      { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] },
+    );
 
-      const proc = spawn(ffmpegPath, args, { windowsHide: true });
-      let stderr = "";
+    let stderr = "";
+    proc.stderr.setEncoding("utf8");
+    proc.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+      if (stderr.length > 300_000) stderr = stderr.slice(-300_000);
+    });
 
-      proc.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
+    const timeout = setTimeout(() => {
+      try { proc.kill(); } catch {}
+      reject(new Error("Quality evaluation timed out after 4 minutes."));
+    }, TIMEOUT_MS);
+
+    proc.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(new Error(`Failed to start quality evaluation: ${error.message}`));
+    });
+
+    proc.on("close", (code) => {
+      clearTimeout(timeout);
+
+      if (code !== 0) {
+        reject(new Error(`FFmpeg quality evaluation failed with exit code ${code}.\n${stderr.trim()}`));
+        return;
+      }
+
+      const ssim = parseMetric(stderr, "SSIM");
+      const psnr = parseMetric(stderr, "PSNR");
+      const vmaf = parseMetric(stderr, "VMAF");
+
+      if (ssim === null || psnr === null || vmaf === null) {
+        reject(new Error(
+          `FFmpeg completed but did not expose all quality metrics. SSIM=${ssim ?? "null"}, PSNR=${psnr ?? "null"}, VMAF=${vmaf ?? "null"}.`,
+        ));
+        return;
+      }
+
+      resolve({
+        ssim: Number(ssim.toFixed(6)),
+        psnr: Number(psnr.toFixed(3)),
+        vmaf: Number(vmaf.toFixed(2)),
       });
-
-      proc.on("close", () => {
-        const ssimMatch = stderr.match(/SSIM Y:([\d.]+)/);
-        const psnrMatch = stderr.match(/average:([\d.]+)/);
-
-        const ssim = ssimMatch ? parseFloat(ssimMatch[1] ?? "0.9987") : 0.9987;
-        const psnr = psnrMatch ? parseFloat(psnrMatch[1] ?? "53.68") : 53.68;
-        const vmaf = Math.min(99.5, Math.max(85, ssim * 97.2 + (psnr / 50) * 2.8));
-
-        resolve({
-          ssim: Number(ssim.toFixed(4)),
-          psnr: Number(psnr.toFixed(1)),
-          vmaf: Number(vmaf.toFixed(1)),
-        });
-      });
-
-      proc.on("error", () => {
-        resolve({ ssim: 0.9987, psnr: 53.6, vmaf: 97.2 });
-      });
-    } catch {
-      resolve({ ssim: 0.9987, psnr: 53.6, vmaf: 97.2 });
-    }
+    });
   });
 }
