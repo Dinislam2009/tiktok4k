@@ -16,6 +16,7 @@ model User {
   devices       Device[]
   authSessions  AuthSession[]
   subscriptions Subscription[]
+  usageRecords  UsageRecord[]
 }
 
 model Device {
@@ -53,4 +54,17 @@ model Subscription {
   expiresAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+}
+
+model UsageRecord {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String
+  status      String   @default("RUNNING") // RUNNING, COMPLETED, FAILED
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([userId, createdAt])
+  @@index([userId, status, createdAt])
 }
