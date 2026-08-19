@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { app } from "electron";
 import { analyzeVideo } from "./analyzer.js";
 import { createOptimizationPlan, type OptimizationRequest } from "./optimization.js";
 import type { VideoMetadata } from "./types.js";
@@ -16,12 +15,16 @@ export interface RenderOptions extends OptimizationRequest {
 export interface RenderProgress { percent: number; frame: number; fps: number; bitrate: string; outTimeSeconds: number; speed: string; }
 export interface RenderResult { outputPath: string; duration: number; }
 
-function getBinary(): string {
-  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app.isPackaged;
+type ProcessWithResourcesPath = NodeJS.Process & { resourcesPath?: string };
 
-  const executable = isDev
-    ? path.resolve(process.cwd(), "binaries", "ffmpeg", "ffmpeg.exe")
-    : path.resolve(process.resourcesPath, "binaries", "ffmpeg", "ffmpeg.exe");
+function getBinary(): string {
+  const resourcesPath = (process as ProcessWithResourcesPath).resourcesPath;
+  const isPackaged = process.env.VITE_DEV_SERVER_URL === undefined && Boolean(resourcesPath);
+  const executableName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+
+  const executable = isPackaged
+    ? path.resolve(resourcesPath as string, "binaries", "ffmpeg", executableName)
+    : path.resolve(process.cwd(), "binaries", "ffmpeg", executableName);
 
   if (!existsSync(executable)) {
     throw new Error(`FFmpeg binary not found: ${executable}`);
