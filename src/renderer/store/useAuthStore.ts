@@ -26,6 +26,20 @@ function getOrCreateDeviceId(): string {
   return deviceId;
 }
 
+function loadPersistedUser(): User | null {
+  try {
+    const raw = localStorage.getItem("auth-storage");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { state?: { user?: User | null } };
+    const user = parsed.state?.user;
+    if (!user?.id || !user.telegramId) return null;
+    return user;
+  } catch {
+    localStorage.removeItem("auth-storage");
+    return null;
+  }
+}
+
 function persistAuth(user: User): void {
   localStorage.setItem("auth-storage", JSON.stringify({ state: { user } }));
 }
@@ -34,8 +48,10 @@ function clearPersistedAuth(): void {
   localStorage.removeItem("auth-storage");
 }
 
+const persistedUser = loadPersistedUser();
+
 export const useAuthStore = create<AuthStore>((set, get) => ({
-  user: null,
+  user: persistedUser,
   plan: "free",
   dailyLimit: 3,
   isAuthenticating: false,
@@ -47,12 +63,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       const deviceRes = await fetch("http://localhost:3000/api/devices/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          deviceId,
-          name: "Windows Desktop",
-          platform: "Windows",
-        }),
+        body: JSON.stringify({ userId, deviceId, name: "Windows Desktop", platform: "Windows" }),
       });
 
       const deviceData = await deviceRes.json().catch(() => ({}));
@@ -85,10 +96,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
 
       set({ botUrl: data.botUrl });
-
-      if (window.electronAPI?.openExternal) {
-        await window.electronAPI.openExternal(data.botUrl);
-      }
+      if (window.electronAPI?.openExternal) await window.electronAPI.openExternal(data.botUrl);
 
       const startedAt = Date.now();
       const interval = window.setInterval(async () => {
@@ -99,9 +107,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         }
 
         try {
-          const checkRes = await fetch(
-            `http://localhost:3000/api/auth/session/${data.sessionId}`,
-          );
+          const checkRes = await fetch(`http://localhost:3000/api/auth/session/${data.sessionId}`);
 
           if (checkRes.status === 410) {
             window.clearInterval(interval);
