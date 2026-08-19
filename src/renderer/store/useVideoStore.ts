@@ -40,6 +40,17 @@ interface VideoStore {
   reset: () => void;
 }
 
+function getAuthUserId(): string | null {
+  try {
+    const raw = localStorage.getItem("auth-storage");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { state?: { user?: { id?: string } } };
+    return parsed.state?.user?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export const useVideoStore = create<VideoStore>((set, get) => ({
   filePath: null,
   metadata: null,
@@ -73,9 +84,7 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
     const { filePath, target, quality, framing } = get();
     if (!filePath) return;
 
-    // LocalStorage-тен userId мен deviceId алу
-    const authStorage = JSON.parse(localStorage.getItem("auth-storage") || "{}");
-    const userId = authStorage?.state?.user?.id;
+    const userId = getAuthUserId();
     const deviceId = localStorage.getItem("app_device_id");
 
     if (!userId) {
@@ -83,7 +92,13 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       return;
     }
 
-    // Серверден лимитті тексеру
+    if (!deviceId) {
+      alert("Құрылғы тіркелмеген. Telegram арқылы қайта кіріңіз.");
+      return;
+    }
+
+    let usageRecordId: string | null = null;
+
     try {
       const res = await fetch("http://localhost:3000/api/usage/record", {
         method: "POST",
@@ -91,13 +106,17 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
         body: JSON.stringify({ userId, deviceId }),
       });
 
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const errorData = await res.json();
-        alert(errorData.message || "Лимит асып кетті!");
+        alert(data.message || "Лимит асып кетті!");
         return;
       }
+
+      usageRecordId = typeof data.recordId === "string" ? data.recordId : null;
     } catch (err) {
       console.error("Usage validation failed:", err);
+      alert("Серверге қосылу мүмкін болмады. Видеоны қазір өңдеу мүмкін емес.");
+      return;
     }
 
     set({ isRendering: true, progress: null, renderedPath: null, metrics: null });
@@ -116,8 +135,28 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       })) as { outputPath: string };
 
       set({ renderedPath: result.outputPath });
+
+      if (usageRecordId) {
+        await fetch("http://localhost:3000/api/usage/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId, recordId: usageRecordId }),
+        });
+      }
     } catch (err) {
       console.error("Render failed:", err);
+
+      if (usageRecordId) {
+        try {
+          await fetch("http://localhost:3000/api/usage/fail", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId, recordId: usageRecordId }),
+          });
+        } catch (usageError) {
+          console.error("Failed to release usage reservation:", usageError);
+        }
+      }
     } finally {
       unsubscribe();
       set({ isRendering: false });
