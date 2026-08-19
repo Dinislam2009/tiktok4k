@@ -61,8 +61,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   botUrl: null,
 
   init: async () => {
-    // 1. Егер Telegram WebApp арқылы ашылса, бэкендтен сәйкес Prisma User ID алу
     const tg = (window as any).Telegram?.WebApp;
+    
+    // 1. Telegram Mini App ашылғанда БЭКЕНДТЕН нақты User ID алу
     if (tg?.initDataUnsafe?.user) {
       const tgUser = tg.initDataUnsafe.user;
 
@@ -78,7 +79,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
         const data = await res.json().catch(() => ({}));
         if (res.ok && data.user) {
-          const user: User = data.user;
+          const user: User = data.user; // Мұнда базадағы нақты Prisma UUID бар
           persistAuth(user);
           set({ user, isAuthenticating: false });
 
@@ -94,7 +95,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
     }
 
-    // 2. Бұрын сақталған сессияны қайта тексеру
+    // 2. Бұрын сақталған сессияны тексеру
     const currentUser = get().user;
     if (currentUser?.id) {
       try {

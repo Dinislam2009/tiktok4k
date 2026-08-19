@@ -10,12 +10,11 @@ const prisma = new PrismaClient();
 
 await fastify.register(cors, { origin: true });
 
-// Render Health Check маршруты
 fastify.get("/", async () => {
   return { status: "ok", message: "TikTok 4K API is running" };
 });
 
-// Telegram WebApp арқылы тікелей авто-авторизация жасау маршруты
+// Telegram Mini App авто-авторизация маршруты
 fastify.post("/api/auth/telegram-webapp", async (request, reply) => {
   const { telegramId, username } = request.body as { telegramId?: string; username?: string };
   if (!telegramId) return reply.status(400).send({ error: "INVALID_REQUEST" });
@@ -31,7 +30,7 @@ fastify.post("/api/auth/telegram-webapp", async (request, reply) => {
     return {
       status: "APPROVED",
       user: {
-        id: user.id,
+        id: user.id, // Базадағы нақты Prisma UUID ID-ді қайтарады
         telegramId: user.telegramId.toString(),
         username: user.username,
       },
