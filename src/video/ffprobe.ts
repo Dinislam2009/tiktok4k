@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { app } from "electron";
 
 interface FFProbeStream {
   codec_type?: string;
@@ -44,13 +43,16 @@ interface FFProbePacketOutput {
   format?: { duration?: string };
 }
 
+type ProcessWithResourcesPath = NodeJS.Process & { resourcesPath?: string };
+
 function getFFprobePath(): string {
   const executableName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
-  const isDev = process.env.VITE_DEV_SERVER_URL !== undefined || !app?.isPackaged;
+  const resourcesPath = (process as ProcessWithResourcesPath).resourcesPath;
+  const isPackaged = process.env.VITE_DEV_SERVER_URL === undefined && Boolean(resourcesPath);
 
-  const executablePath = isDev
-    ? path.resolve(process.cwd(), "binaries", "ffmpeg", executableName)
-    : path.resolve(process.resourcesPath, "binaries", "ffmpeg", executableName);
+  const executablePath = isPackaged
+    ? path.resolve(resourcesPath as string, "binaries", "ffmpeg", executableName)
+    : path.resolve(process.cwd(), "binaries", "ffmpeg", executableName);
 
   if (!existsSync(executablePath)) {
     throw new Error(`FFprobe not found: ${executablePath}`);
@@ -61,17 +63,17 @@ function getFFprobePath(): string {
 
 function runProcess(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const process = spawn(getFFprobePath(), args, { windowsHide: true });
+    const child = spawn(getFFprobePath(), args, { windowsHide: true });
     let stdout = "";
     let stderr = "";
 
-    process.stdout.setEncoding("utf8");
-    process.stderr.setEncoding("utf8");
-    process.stdout.on("data", (data: string) => { stdout += data; });
-    process.stderr.on("data", (data: string) => { stderr += data; });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (data: string) => { stdout += data; });
+    child.stderr.on("data", (data: string) => { stderr += data; });
 
-    process.on("error", (error) => reject(new Error(`Failed to start FFprobe: ${error.message}`)));
-    process.on("close", (code) => {
+    child.on("error", (error) => reject(new Error(`Failed to start FFprobe: ${error.message}`)));
+    child.on("close", (code) => {
       if (code !== 0) {
         reject(new Error(`FFprobe exited with code ${code}: ${stderr.trim()}`));
         return;
