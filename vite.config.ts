@@ -6,6 +6,7 @@ import path from "node:path";
 export default defineConfig({
   root: "src/renderer",
   plugins: [react(), tailwindcss()],
+  base: "./",
   server: {
     port: 5173,
   },

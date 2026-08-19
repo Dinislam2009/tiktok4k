@@ -1,5 +1,7 @@
 import { create } from "zustand";
 
+const API_BASE_URL = "https://tiktok4k.onrender.com";
+
 interface User {
   id: string;
   telegramId: string;
@@ -8,16 +10,16 @@ interface User {
 
 interface AuthStore {
   user: User | null;
+  token: string | null;
   plan: string;
   dailyLimit: string | number;
   isAuthenticating: boolean;
   botUrl: string | null;
   startAuth: () => Promise<void>;
-  registerCurrentDevice: (userId: string) => Promise<void>;
+  registerCurrentDevice: (token: string) => Promise<void>;
   logout: () => void;
 }
 
-// Компьютердің бірегей Device ID-ін генерациялау / сақтау
 function getOrCreateDeviceId(): string {
   let deviceId = localStorage.getItem("app_device_id");
   if (!deviceId) {
@@ -29,26 +31,31 @@ function getOrCreateDeviceId(): string {
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
+  token: localStorage.getItem("app_jwt_token") || null,
   plan: "free",
   dailyLimit: 3,
   isAuthenticating: false,
   botUrl: null,
 
-  registerCurrentDevice: async (userId: string) => {
+  registerCurrentDevice: async (token: string) => {
     try {
       const deviceId = getOrCreateDeviceId();
-      await fetch("http://localhost:3000/api/devices/register", {
+      await fetch(`${API_BASE_URL}/api/devices/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
-          userId,
           deviceId,
           name: "Windows Desktop",
           platform: "Windows",
         }),
       });
 
-      const res = await fetch(`http://localhost:3000/api/user/status/${userId}`);
+      const res = await fetch(`${API_BASE_URL}/api/user/status`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await res.json();
       set({ plan: data.plan, dailyLimit: data.dailyLimit });
     } catch (err) {
@@ -59,7 +66,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   startAuth: async () => {
     set({ isAuthenticating: true, botUrl: null });
     try {
-      const res = await fetch("http://localhost:3000/api/auth/request", {
+      const res = await fetch(`${API_BASE_URL}/api/auth/request`, {
         method: "POST",
       });
       const data = await res.json();
@@ -72,14 +79,20 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       const interval = setInterval(async () => {
         try {
           const checkRes = await fetch(
-            `http://localhost:3000/api/auth/session/${data.sessionId}`
+            `${API_BASE_URL}/api/auth/session/${data.sessionId}`
           );
           const checkData = await checkRes.json();
 
-          if (checkData.status === "APPROVED") {
+          if (checkData.status === "APPROVED" && checkData.token) {
             clearInterval(interval);
-            set({ user: checkData.user, isAuthenticating: false, botUrl: null });
-            await get().registerCurrentDevice(checkData.user.id);
+            localStorage.setItem("app_jwt_token", checkData.token);
+            set({
+              user: checkData.user,
+              token: checkData.token,
+              isAuthenticating: false,
+              botUrl: null,
+            });
+            await get().registerCurrentDevice(checkData.token);
           }
         } catch (e) {
           console.error("Session check error:", e);
@@ -91,5 +104,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
   },
 
-  logout: () => set({ user: null, plan: "free", dailyLimit: 3 }),
+  logout: () => {
+    localStorage.removeItem("app_jwt_token");
+    set({ user: null, token: null, plan: "free", dailyLimit: 3 });
+  },
 }));

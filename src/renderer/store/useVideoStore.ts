@@ -1,4 +1,7 @@
 import { create } from "zustand";
+import { useAuthStore } from "./useAuthStore";
+
+const API_BASE_URL = "https://tiktok4k.onrender.com";
 
 export interface RenderProgress {
   percent: number;
@@ -73,22 +76,22 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
     const { filePath, target, quality, framing } = get();
     if (!filePath) return;
 
-    // LocalStorage-тен userId мен deviceId алу
-    const authStorage = JSON.parse(localStorage.getItem("auth-storage") || "{}");
-    const userId = authStorage?.state?.user?.id;
+    const token = useAuthStore.getState().token;
     const deviceId = localStorage.getItem("app_device_id");
 
-    if (!userId) {
+    if (!token) {
       alert("Видеоны оңтайландыру үшін алдымен Telegram арқылы кіріңіз!");
       return;
     }
 
-    // Серверден лимитті тексеру
     try {
-      const res = await fetch("http://localhost:3000/api/usage/record", {
+      const res = await fetch(`${API_BASE_URL}/api/usage/record`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, deviceId }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ deviceId }),
       });
 
       if (!res.ok) {
@@ -98,6 +101,8 @@ export const useVideoStore = create<VideoStore>((set, get) => ({
       }
     } catch (err) {
       console.error("Usage validation failed:", err);
+      alert("Сервермен байланыс орнату мүмкін болмады.");
+      return;
     }
 
     set({ isRendering: true, progress: null, renderedPath: null, metrics: null });

@@ -2,6 +2,7 @@ node_modules/
 dist/
 build/
 out/
+release/
 
 # Local FFmpeg binaries (not committed)
 binaries/

@@ -9,42 +9,39 @@
     "dev:server": "tsx src/server.ts",
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 NODE_OPTIONS=\"--import tsx\" electron src/main/main.ts",
+    "compile": "esbuild src/main/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/main/main.js && vite build && node -e \"const fs=require('fs'); fs.mkdirSync('dist/main',{recursive:true}); fs.copyFileSync('src/main/preload.cjs','dist/main/preload.cjs')\"",
     "package": "npm run compile && electron-builder",
     "analyze": "tsx src/test-analyzer.ts",
     "render": "tsx src/test-renderer.ts",
+    "build:server": "npx prisma generate",
+    "start:server": "npx tsx src/server.ts",
     "quality": "tsx src/test-quality.ts"
   },
   "build": {
-    "appId": "com.dinislam.tiktok4k",
-    "productName": "TikTok4K Optimizer",
+    "appId": "com.tiktok4k.optimizer",
+    "productName": "Social Video Quality Optimizer",
+    "asar": false,
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "src/main/preload.cjs"
+      "package.json"
     ],
     "extraResources": [
       {
         "from": "binaries",
-        "to": "binaries"
+        "to": "binaries",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
+        "nsis"
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -55,6 +52,8 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
+    "@fastify/jwt": "^10.2.2",
+    "@fastify/rate-limit": "^11.2.0",
     "@prisma/client": "^6.19.3",
     "dotenv": "^17.4.2",
     "fastify": "^5.12.1",
@@ -75,6 +74,8 @@
     "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
     "electron": "^43.4.1",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.0",
     "postcss": "^8.5.26",
     "prisma": "^6.19.3",
     "tailwindcss": "^4.3.3",
