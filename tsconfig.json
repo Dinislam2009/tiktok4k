@@ -13,9 +13,9 @@
     "rootDir": "src",
     "jsx": "react-jsx",
     "strict": false,
-    "baseUrl": ".",
+
     "paths": {
-      "@/*": ["src/renderer/*"]
+      "@/*": ["./src/renderer/*"]
     }
   },
   "include": ["src"],
