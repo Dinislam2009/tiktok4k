@@ -49,7 +49,7 @@ fastify.post(
   "/api/auth/request",
   {
     config: {
-      rateLimit: { max: 10, timeWindow: "1 minute" },
+      rateLimit: { max: 30, timeWindow: "1 minute" },
     },
   },
   async () => {
