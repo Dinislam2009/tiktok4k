@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Bot } from "grammy";
 import { PrismaClient } from "@prisma/client";
 
@@ -5,7 +6,7 @@ const prisma = new PrismaClient();
 export const bot = new Bot(process.env.BOT_TOKEN || "");
 
 bot.command("start", async (ctx) => {
-  const payload = ctx.match; // auth_SESSION_ID
+  const payload = ctx.match;
 
   if (payload && payload.startsWith("auth_")) {
     const sessionId = payload.replace("auth_", "");
@@ -21,14 +22,12 @@ bot.command("start", async (ctx) => {
     const telegramId = BigInt(ctx.from?.id || 0);
     const username = ctx.from?.username || null;
 
-    // Пайдаланушыны базадан табу немесе жаңадан тіркеу
     const user = await prisma.user.upsert({
       where: { telegramId },
       update: { username },
       create: { telegramId, username },
     });
 
-    // Сессияны РАСТАЛДЫ (APPROVED) деп жаңарту
     await prisma.authSession.update({
       where: { sessionId },
       data: {
@@ -42,5 +41,5 @@ bot.command("start", async (ctx) => {
     return ctx.reply("✅ Авторизация сәтті өтті! Десктоп қолданбаға қайта аласыз.");
   }
 
-  ctx.reply("Сәлем! Social Video Optimizer ботына қош келдіңіз.");
+  await ctx.reply("Сәлем! Social Video Optimizer ботына қош келдіңіз.");
 });
