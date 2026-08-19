@@ -9,10 +9,13 @@
     "dev:server": "tsx src/server.ts",
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 NODE_OPTIONS=\"--import tsx\" electron src/main/main.ts",
+    "compile": "prisma generate && tsc",
     "package": "npm run compile && electron-builder",
     "analyze": "tsx src/test-analyzer.ts",
     "render": "tsx src/test-renderer.ts",
-    "quality": "tsx src/test-quality.ts"
+    "quality": "tsx src/test-quality.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push"
   },
   "build": {
     "appId": "com.dinislam.tiktok4k",
@@ -66,10 +69,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@tailwindcss/vite": "^4.3.3",
-    "@types/node": "^26.2.0",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@tailwindcss/vite": "^6.0.0",
     "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.5",
