@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  telegramId    BigInt         @unique
+  username      String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  devices       Device[]
+  authSessions  AuthSession[]
+  subscriptions Subscription[]
+}
+
+model Device {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId   String    @unique
+  name       String?
+  platform   String?
+  appVersion String?
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model AuthSession {
+  id         String    @id @default(uuid())
+  sessionId  String    @unique
+  status     String    @default("PENDING") // PENDING, APPROVED, EXPIRED
+  telegramId BigInt?
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  approvedAt DateTime?
+}
+
+model Subscription {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan      String    @default("free") // free, pro_monthly
+  status    String    @default("active")
+  startedAt DateTime  @default(now())
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
