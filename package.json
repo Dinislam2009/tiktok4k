@@ -9,7 +9,7 @@
     "dev:server": "tsx src/server.ts",
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 NODE_OPTIONS=\"--import tsx\" electron src/main/main.ts",
-    "compile": "prisma generate && tsc",
+    "compile": "prisma generate && vite build && tsc",
     "package": "npm run compile && electron-builder",
     "analyze": "tsx src/test-analyzer.ts",
     "render": "tsx src/test-renderer.ts",
