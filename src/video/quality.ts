@@ -30,6 +30,14 @@ function getDisplayDimensions(width: number, height: number, rotation: number) {
   return quarterTurn ? { width: height, height: width } : { width, height };
 }
 
+function getRotationFilter(rotation: number): string {
+  const normalizedRotation = ((rotation % 360) + 360) % 360;
+  if (normalizedRotation === 90) return "transpose=1";
+  if (normalizedRotation === 270) return "transpose=2";
+  if (normalizedRotation === 180) return "hflip,vflip";
+  return "null";
+}
+
 function parseMetric(stderr: string, type: "SSIM" | "PSNR" | "VMAF"): number | null {
   const patterns = type === "SSIM"
     ? [/SSIM\s+Y:[^\n]*?All:\s*([0-9.]+)/i, /All:\s*([0-9.]+)/i]
@@ -52,9 +60,10 @@ export async function calculateMetrics(sourcePath: string, outputPath: string): 
   const source = await analyzeVideo(sourcePath);
   const display = getDisplayDimensions(source.width, source.height, source.rotation);
   const fps = source.fps;
+  const sourceRotationFilter = getRotationFilter(source.rotation);
 
   const filter = [
-    `[0:v]scale=${display.width}:${display.height}:force_original_aspect_ratio=disable:flags=lanczos,setsar=1,fps=${fps},settb=1/${fps},setpts=PTS-STARTPTS[ref]`,
+    `[0:v]${sourceRotationFilter},scale=${display.width}:${display.height}:force_original_aspect_ratio=disable:flags=lanczos,setsar=1,fps=${fps},settb=1/${fps},setpts=PTS-STARTPTS[ref]`,
     `[1:v]scale=${display.width}:${display.height}:force_original_aspect_ratio=disable:flags=lanczos,setsar=1,fps=${fps},settb=1/${fps},setpts=PTS-STARTPTS[enc]`,
     `[ref]split=3[r1][r2][r3]`,
     `[enc]split=3[e1][e2][e3]`,
