@@ -14,9 +14,9 @@ export const Dropzone: React.FC = () => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file && (file.path || (file as any).path)) {
-      analyze((file as any).path || file.path);
+    const file = e.dataTransfer.files[0] as (File & { path?: string }) | undefined;
+    if (file?.path) {
+      analyze(file.path);
     }
   };
 

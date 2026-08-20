@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 export interface ElectronAPI {
   selectFile: () => Promise<string | null>;
   analyzeVideo: (filePath: string) => Promise<unknown>;
