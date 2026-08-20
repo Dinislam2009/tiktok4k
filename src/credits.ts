@@ -115,6 +115,22 @@ export async function refundVideoUsage(prisma: PrismaClient, usageRecordId: stri
   });
 }
 
+export async function recoverStaleVideoUsages(prisma: PrismaClient, staleAfterMs = 2 * 60 * 60 * 1000) {
+  const cutoff = new Date(Date.now() - staleAfterMs);
+  const staleRecords = await prisma.usageRecord.findMany({
+    where: { status: "RUNNING", createdAt: { lt: cutoff } },
+    select: { id: true },
+  });
+
+  let recovered = 0;
+  for (const record of staleRecords) {
+    const result = await refundVideoUsage(prisma, record.id);
+    if (result?.status === "FAILED") recovered += 1;
+  }
+
+  return recovered;
+}
+
 export async function getCreditBalance(prisma: PrismaClient, userId: string) {
   return withSerializableRetry(prisma, async (tx) => {
     await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() } });
