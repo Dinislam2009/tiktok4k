@@ -6,8 +6,6 @@ import { videoQueue } from "./queue.js";
 import { getCreditBalance, grantPurchasedCredits, grantReferralBonus, refundVideoUsage, reserveVideoCredit } from "./credits.js";
 import fs from "fs";
 import path from "path";
-import http from "http";
-import https from "https";
 
 const prisma = new PrismaClient();
 const LOCAL_API_URL = process.env.LOCAL_API_URL || "http://127.0.0.1:8081";
@@ -17,45 +15,28 @@ export const bot = new Bot(BOT_TOKEN, {
   client: { apiRoot: LOCAL_API_URL },
 });
 
-const cloudBot = new Bot(BOT_TOKEN);
-
 const CHANNEL_USERNAME = "@tiktokvideo4k";
 const BOT_USERNAME = "tiktokvideo4kbot";
 const ADMIN_USERNAME = "D1mawik";
 const TEMP_DIR = path.join(process.cwd(), "temp");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-function downloadFileStream(url: string, destPath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const transport = url.startsWith("https://") ? https : http;
-    const file = fs.createWriteStream(destPath);
+function copyLocalTelegramFile(filePath: string, destPath: string): boolean {
+  const candidates = [
+    filePath,
+    path.join(TEMP_DIR, filePath),
+    path.join(TEMP_DIR, filePath.replace(/^[/\\]+/, "")),
+  ];
 
-    const request = transport.get(url, (res) => {
-      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        file.close();
-        fs.unlink(destPath, () => {});
-        return downloadFileStream(res.headers.location, destPath).then(resolve, reject);
-      }
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      fs.copyFileSync(candidate, destPath);
+      console.log("Copied local Telegram file:", candidate);
+      return true;
+    }
+  }
 
-      if (res.statusCode !== 200) {
-        file.close();
-        fs.unlink(destPath, () => {});
-        return reject(new Error(`HTTP Error: ${res.statusCode}`));
-      }
-
-      res.pipe(file);
-      file.on("finish", () => {
-        file.close();
-        resolve();
-      });
-    });
-
-    request.on("error", (err) => {
-      file.close();
-      fs.unlink(destPath, () => {});
-      reject(err);
-    });
-  });
+  return false;
 }
 
 async function isSubscribed(ctx: any, telegramId: number): Promise<boolean> {
@@ -204,9 +185,11 @@ bot.on(["message:document", "message:video"], async (ctx) => {
 
     if (!file.file_path) throw new Error("Local Bot API did not return file_path");
 
-    const fileUrl = `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${file.file_path}`;
-    console.log("Downloading local Telegram file:", fileUrl.replace(BOT_TOKEN, "<BOT_TOKEN>"));
-    await downloadFileStream(fileUrl, inputPath);
+    if (copyLocalTelegramFile(file.file_path, inputPath)) {
+      console.log("Telegram file copied directly from shared Local Bot API storage.");
+    } else {
+      throw new Error(`Local Telegram file was not found on shared storage: ${file.file_path}`);
+    }
 
     await videoQueue.add("process-video", {
       chatId: ctx.chat.id,
@@ -217,6 +200,8 @@ bot.on(["message:document", "message:video"], async (ctx) => {
       fileName,
       lang,
     });
+
+    console.log("Video job added to BullMQ:", reserved.usageRecordId);
   } catch (error) {
     console.error("Queue add error:", error);
     await refundVideoUsage(prisma, reserved.usageRecordId);
