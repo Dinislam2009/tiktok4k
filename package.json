@@ -15,7 +15,9 @@
     "render": "tsx src/test-renderer.ts",
     "quality": "tsx src/test-quality.ts",
     "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push"
+    "prisma:push": "prisma db push",
+    "bot": "tsx src/bot.ts",
+    "worker": "tsx src/worker.ts"
   },
   "build": {
     "appId": "com.dinislam.tiktok4k",
