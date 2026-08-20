@@ -8,10 +8,12 @@ const framing = (process.argv[4] ?? "crop") as FramingMode;
 const quality = (process.argv[5] ?? "balanced") as QualityMode;
 const target = (process.argv[6] ?? "tiktok") as SocialTarget;
 const preset = process.argv[7] ?? "veryslow";
+const crfArg = process.argv[8];
+const crf = crfArg === undefined ? undefined : Number(crfArg);
 
 if (!inputPath || !outputPath) {
   console.error(
-    "Usage: npm run render -- <input-video> <output-video> [crop|fit] [quality|balanced|size] [tiktok|instagram_reels] [preset]",
+    "Usage: npm run render -- <input-video> <output-video> [crop|fit] [quality|balanced|size] [tiktok|instagram_reels] [preset] [crf]",
   );
   process.exit(1);
 }
@@ -34,6 +36,11 @@ if (!["tiktok", "instagram_reels"].includes(target)) {
   process.exit(1);
 }
 
+if (crf !== undefined && (!Number.isFinite(crf) || crf < 0 || crf > 51)) {
+  console.error("CRF must be a number from 0 to 51.");
+  process.exit(1);
+}
+
 async function main() {
   const renderer = new FFmpegRenderer();
 
@@ -47,6 +54,7 @@ async function main() {
         framing,
         codec: "libx264",
         preset,
+        crf,
       },
       (progress) => {
         process.stdout.write(
@@ -60,6 +68,7 @@ async function main() {
     console.log(`Framing: ${framing}`);
     console.log(`Quality: ${quality}`);
     console.log(`Preset: ${preset}`);
+    console.log(`CRF: ${crf ?? "plan default"}`);
     console.log(`Rendered: ${result.outputPath}`);
   } catch (error) {
     process.stdout.write("\n");
