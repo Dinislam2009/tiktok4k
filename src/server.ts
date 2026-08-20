@@ -3,7 +3,6 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { bot } from "./bot.js";
 
 const fastify = Fastify({ logger: true });
 const prisma = new PrismaClient();
@@ -14,7 +13,6 @@ fastify.get("/", async () => {
   return { status: "ok", message: "TikTok 4K API is running" };
 });
 
-// Telegram Mini App авто-авторизация маршруты
 fastify.post("/api/auth/telegram-webapp", async (request, reply) => {
   const { telegramId, username } = request.body as { telegramId?: string; username?: string };
   if (!telegramId) return reply.status(400).send({ error: "INVALID_REQUEST" });
@@ -30,7 +28,7 @@ fastify.post("/api/auth/telegram-webapp", async (request, reply) => {
     return {
       status: "APPROVED",
       user: {
-        id: user.id, // Базадағы нақты Prisma UUID ID-ді қайтарады
+        id: user.id,
         telegramId: user.telegramId.toString(),
         username: user.username,
       },
@@ -246,11 +244,6 @@ fastify.post("/api/usage/fail", async (request, reply) => {
 
 const start = async () => {
   try {
-    bot.start().catch((err) => {
-      console.error("Telegram Bot іске қосу кезіндегі қателік:", err.message);
-    });
-    console.log("🤖 Telegram Bot ортасы бапталды!");
-
     await fastify.listen({ port: Number(process.env.PORT) || 3000, host: "0.0.0.0" });
     console.log("🚀 Fastify API сервер іске қосылды!");
   } catch (err) {
