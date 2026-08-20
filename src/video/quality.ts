@@ -32,8 +32,10 @@ function getDisplayDimensions(width: number, height: number, rotation: number) {
 
 function getRotationFilter(rotation: number): string {
   const normalizedRotation = ((rotation % 360) + 360) % 360;
-  if (normalizedRotation === 90) return "transpose=1";
-  if (normalizedRotation === 270) return "transpose=2";
+  // FFmpeg's QuickTime display-matrix rotation is expressed in the opposite
+  // direction from the transpose filter numbering used here.
+  if (normalizedRotation === 90) return "transpose=2";
+  if (normalizedRotation === 270) return "transpose=1";
   if (normalizedRotation === 180) return "hflip,vflip";
   return "null";
 }
@@ -77,9 +79,8 @@ export async function calculateMetrics(sourcePath: string, outputPath: string): 
       ffmpegPath,
       [
         "-hide_banner", "-nostdin",
-        // The source contains QuickTime display-rotation metadata. Disable
-        // FFmpeg's automatic rotation so the explicit transpose below is the
-        // only rotation applied to the reference frame.
+        // Disable automatic QuickTime rotation because the reference rotation
+        // is applied explicitly by getRotationFilter().
         "-noautorotate",
         "-i", sourcePath,
         "-i", outputPath,
