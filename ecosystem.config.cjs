@@ -2,8 +2,9 @@ module.exports = {
   apps: [
     {
       name: "tiktok4k-bot",
-      script: "src/bot.ts",
-      interpreter: "node_modules/tsx/dist/cli.cjs",
+      script: "node_modules/tsx/dist/cli.cjs",
+      args: "src/bot.ts",
+      interpreter: "node",
       autorestart: true,
       restart_delay: 5000,
       max_restarts: 20,
@@ -14,8 +15,9 @@ module.exports = {
     },
     {
       name: "tiktok4k-worker",
-      script: "src/worker.ts",
-      interpreter: "node_modules/tsx/dist/cli.cjs",
+      script: "node_modules/tsx/dist/cli.cjs",
+      args: "src/worker.ts",
+      interpreter: "node",
       autorestart: true,
       restart_delay: 5000,
       max_restarts: 20,
