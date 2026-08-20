@@ -115,7 +115,7 @@ export class FFmpegRenderer {
 
     const plan = createOptimizationPlan(metadata, options);
     const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
-    const preset = options.preset ?? (options.quality === "quality" ? "veryslow" : "medium");
+    const preset = options.preset ?? (options.quality === "quality" ? "medium" : "medium");
     const crf = options.crf ?? plan.output.crf;
     const isHdrH264 = metadata.isHDR && encoder === "libx264" && plan.output.pixelFormat === "yuv420p10le";
 
@@ -132,10 +132,7 @@ export class FFmpegRenderer {
     if (plan.filter) commonArgs.push("-vf", plan.filter);
 
     const audioArgs = options.quality === "quality"
-      ? [
-          "-c:a", "copy",
-          "-movflags", "+faststart",
-        ]
+      ? ["-c:a", "copy", "-movflags", "+faststart"]
       : [
           "-c:a", "aac",
           "-b:a", `${plan.output.audioBitrateKbps}k`,
@@ -147,13 +144,13 @@ export class FFmpegRenderer {
         ? ["-profile:v", "high10"]
         : ["-profile:v", "high", "-level:v", "4.1"];
 
+      // Quality mode is CRF-driven. Do not impose a second maxrate/bufsize
+      // ceiling: it can make CRF changes ineffective and artificially cap quality.
       await this.run([
         ...commonArgs,
         ...audioArgs,
         ...videoProfileArgs,
         "-crf", String(crf),
-        "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
-        "-bufsize", `${plan.output.bufferSizeKbps}k`,
         "-progress", "pipe:1",
         "-nostats",
         options.outputPath,
