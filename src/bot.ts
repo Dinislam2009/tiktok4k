@@ -10,10 +10,15 @@ import http from "http";
 
 const prisma = new PrismaClient();
 const LOCAL_API_URL = process.env.LOCAL_API_URL || "http://127.0.0.1:8081";
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
 
-export const bot = new Bot(process.env.BOT_TOKEN || "", {
+export const bot = new Bot(BOT_TOKEN, {
   client: { apiRoot: LOCAL_API_URL },
 });
+
+// The local Bot API is used for normal bot traffic. File retrieval falls back
+// to Telegram's public Bot API when the local server rejects a file_id.
+const cloudBot = new Bot(BOT_TOKEN);
 
 const CHANNEL_USERNAME = "@tiktokvideo4k";
 const BOT_USERNAME = "tiktokvideo4kbot";
@@ -180,14 +185,29 @@ bot.on(["message:document", "message:video"], async (ctx) => {
   const outputPath = path.join(TEMP_DIR, `out_${reserved.usageRecordId}${ext}`);
 
   try {
-    const file = await ctx.api.getFile(doc.file_id);
+    let file;
+    try {
+      file = await ctx.api.getFile(doc.file_id);
+      console.log("Local Bot API getFile succeeded:", file.file_path);
+    } catch (localError) {
+      console.warn("Local Bot API getFile failed; trying public Bot API:", localError);
+      file = await cloudBot.api.getFile(doc.file_id);
+      console.log("Public Bot API getFile succeeded:", file.file_path);
+    }
+
     if (!file.file_path) throw new Error("File path error");
 
     if (fs.existsSync(file.file_path)) {
       fs.copyFileSync(file.file_path, inputPath);
     } else {
-      const fileUrl = `${LOCAL_API_URL}/file/bot${process.env.BOT_TOKEN}/${file.file_path}`;
-      await downloadFileStream(fileUrl, inputPath);
+      const fileUrl = `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${file.file_path}`;
+      try {
+        await downloadFileStream(fileUrl, inputPath);
+      } catch (localDownloadError) {
+        console.warn("Local file download failed; trying public Bot API download:", localDownloadError);
+        const cloudFileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+        await downloadFileStream(cloudFileUrl, inputPath);
+      }
     }
 
     await videoQueue.add("process-video", {
