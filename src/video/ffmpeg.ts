@@ -103,16 +103,16 @@ export class FFmpegRenderer {
     const isHdrH264 = metadata.isHDR && encoder === "libx264" && plan.output.pixelFormat === "yuv420p10le";
     const commonArgs = ["-hide_banner", "-y", "-i", options.inputPath, "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "0", "-c:v", encoder, "-preset", preset, "-r", String(plan.output.fps), "-pix_fmt", plan.output.pixelFormat];
     if (plan.filter) commonArgs.push("-vf", plan.filter);
-    const audioArgs = options.quality === "quality" ? ["-c:a", "copy", "-movflags", "+faststart"] : ["-c:a", "aac", "-b:a", `${plan.output.audioBitrateKbps}k`, "-movflags", "+faststart"];
+    const audioArgs = options.quality === "quality" ? ["-c:a", "copy", "-movflags", "+faststart"] : ["-c:a", "aac", "-b:a", String(plan.output.audioBitrateKbps) + "k", "-movflags", "+faststart"];
 
     if (options.quality === "quality" && encoder === "libx264") {
       const videoProfileArgs = isHdrH264 ? ["-profile:v", "high10"] : ["-profile:v", "high", "-level:v", "4.1"];
       const capArgs = options.maxrateKbps !== undefined
-        ? ["-maxrate", `${options.maxrateKbps}k`, "-bufsize", `${Math.round(options.maxrateKbps * 2)}k"]
+        ? ["-maxrate", String(options.maxrateKbps) + "k", "-bufsize", String(Math.round(options.maxrateKbps * 2)) + "k"]
         : [];
       await this.run([...commonArgs, ...audioArgs, ...videoProfileArgs, "-crf", String(crf), ...capArgs, "-progress", "pipe:1", "-nostats", options.outputPath], metadata, onProgress);
     } else {
-      const rateControl = ["-crf", String(crf), "-b:v", `${plan.output.videoBitrateKbps}k`, "-maxrate", `${plan.output.maxVideoBitrateKbps}k`, "-bufsize", `${plan.output.bufferSizeKbps}k"];
+      const rateControl = ["-crf", String(crf), "-b:v", String(plan.output.videoBitrateKbps) + "k", "-maxrate", String(plan.output.maxVideoBitrateKbps) + "k", "-bufsize", String(plan.output.bufferSizeKbps) + "k"];
       await this.run([...commonArgs, ...audioArgs, ...rateControl, "-progress", "pipe:1", "-nostats", options.outputPath], metadata, onProgress);
     }
     return { outputPath: options.outputPath, duration: metadata.duration };
