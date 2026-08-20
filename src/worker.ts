@@ -2,10 +2,10 @@ import { Worker } from "bullmq";
 import { redisConnection } from "./queue.js";
 import { PrismaClient } from "@prisma/client";
 import { Bot, InputFile } from "grammy";
+import { completeVideoUsage, refundVideoUsage } from "./credits.js";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
 import fs from "fs";
-import path from "path";
 
 if (ffmpegInstaller) {
   ffmpeg.setFfmpegPath(ffmpegInstaller);
@@ -33,7 +33,7 @@ export const worker = new Worker(
         ffmpeg(inputPath)
           .outputOptions([
             "-map 0",
-            "-vf scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,unsharp=5:5:0.8:5:5:0.0", // 1080p Smart HD + Unsharp
+            "-vf scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,unsharp=5:5:0.8:5:5:0.0",
             "-c:v libx264",
             "-crf 18",
             "-preset slow",
@@ -65,18 +65,22 @@ export const worker = new Worker(
         parse_mode: "Markdown",
       });
 
-      await prisma.usageRecord.update({
-        where: { id: usageRecordId },
-        data: { status: "COMPLETED", completedAt: new Date() },
-      });
+      await completeVideoUsage(prisma, usageRecordId);
 
     } catch (error) {
       console.error("Worker processing error:", error);
-      await prisma.usageRecord.update({
-        where: { id: usageRecordId },
-        data: { status: "FAILED" },
-      });
-      await bot.api.sendMessage(chatId, lang === "kk" ? "❌ **Видео өңдеуде қате шықты.**" : "❌ **Ошибка при обработке.**");
+      try {
+        await refundVideoUsage(prisma, usageRecordId);
+      } catch (refundError) {
+        console.error("Credit refund error:", refundError);
+      }
+      await bot.api.sendMessage(
+        chatId,
+        lang === "kk"
+          ? "❌ **Видео өңдеуде қате шықты. Видеоңыз балансыңызға қайтарылды.**"
+          : "❌ **Ошибка при обработке. Видео возвращено на ваш баланс.**",
+        { parse_mode: "Markdown" },
+      ).catch(() => {});
     } finally {
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
       if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
@@ -84,6 +88,6 @@ export const worker = new Worker(
   },
   {
     connection: redisConnection,
-    concurrency: 2, // Бір уақытта максимум 2 видео өңделеді (сервер құламайды)
-  }
+    concurrency: 2,
+  },
 );
