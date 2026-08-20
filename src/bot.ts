@@ -21,22 +21,23 @@ const ADMIN_USERNAME = "D1mawik";
 const TEMP_DIR = path.join(process.cwd(), "temp");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-function copyLocalTelegramFile(filePath: string, destPath: string): boolean {
-  const candidates = [
-    filePath,
-    path.join(TEMP_DIR, filePath),
-    path.join(TEMP_DIR, filePath.replace(/^[/\\]+/, "")),
-  ];
+async function downloadLocalTelegramFile(filePath: string, destPath: string): Promise<void> {
+  const url = `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${filePath}`;
+  console.log("Downloading local Telegram file:", url.replace(BOT_TOKEN, "<BOT_TOKEN>"));
 
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      fs.copyFileSync(candidate, destPath);
-      console.log("Copied local Telegram file:", candidate);
-      return true;
-    }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Local Telegram file download failed: HTTP ${response.status}`);
   }
 
-  return false;
+  const arrayBuffer = await response.arrayBuffer();
+  fs.writeFileSync(destPath, Buffer.from(arrayBuffer));
+
+  if (!fs.existsSync(destPath) || fs.statSync(destPath).size === 0) {
+    throw new Error("Downloaded Telegram file is empty");
+  }
+
+  console.log("Downloaded local Telegram file:", destPath, fs.statSync(destPath).size, "bytes");
 }
 
 async function isSubscribed(ctx: any, telegramId: number): Promise<boolean> {
@@ -185,10 +186,11 @@ bot.on(["message:document", "message:video"], async (ctx) => {
 
     if (!file.file_path) throw new Error("Local Bot API did not return file_path");
 
-    if (copyLocalTelegramFile(file.file_path, inputPath)) {
-      console.log("Telegram file copied directly from shared Local Bot API storage.");
-    } else {
-      throw new Error(`Local Telegram file was not found on shared storage: ${file.file_path}`);
+    try {
+      await downloadLocalTelegramFile(file.file_path, inputPath);
+    } catch (downloadError) {
+      console.warn("Local Telegram HTTP download failed:", downloadError);
+      throw new Error(`Unable to download Telegram file from Local Bot API: ${file.file_path}`);
     }
 
     await videoQueue.add("process-video", {
