@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { Worker } from "bullmq";
 import { redisConnection } from "./queue.js";
 import { PrismaClient } from "@prisma/client";
@@ -27,6 +28,8 @@ export const worker = new Worker(
   async (job) => {
     const { chatId, usageRecordId, inputPath, outputPath, fileName, lang } = job.data;
     let lastEditTime = Date.now();
+
+    console.log(`▶️ JOB ACTIVE: ${job.id} | file=${fileName} | usage=${usageRecordId}`);
 
     try {
       await new Promise((resolve, reject) => {
@@ -66,9 +69,10 @@ export const worker = new Worker(
       });
 
       await completeVideoUsage(prisma, usageRecordId);
+      console.log(`✅ JOB COMPLETED: ${job.id} | usage=${usageRecordId}`);
 
     } catch (error) {
-      console.error("Worker processing error:", error);
+      console.error(`❌ JOB FAILED: ${job.id}`, error);
       try {
         await refundVideoUsage(prisma, usageRecordId);
       } catch (refundError) {
@@ -91,3 +95,17 @@ export const worker = new Worker(
     concurrency: 2,
   },
 );
+
+worker.on("ready", () => {
+  console.log("✅ WORKER READY — Redis connection established");
+});
+
+worker.on("error", (error) => {
+  console.error("❌ WORKER ERROR:", error);
+});
+
+worker.on("closed", () => {
+  console.log("🛑 WORKER CLOSED");
+});
+
+console.log("🚀 Video worker starting...");
