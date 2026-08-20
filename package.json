@@ -18,6 +18,8 @@
     "prisma:push": "prisma db push",
     "bot": "tsx src/bot.ts",
     "worker": "tsx src/worker.ts",
+    "cleanup:telegram": "node scripts/cleanup-telegram-storage.cjs",
+    "cleanup:telegram:dry": "cross-env TELEGRAM_CLEANUP_DRY_RUN=1 node scripts/cleanup-telegram-storage.cjs",
     "telegram:up": "docker compose -f docker-compose.telegram.yml up -d",
     "telegram:down": "docker compose -f docker-compose.telegram.yml down",
     "telegram:logs": "docker compose -f docker-compose.telegram.yml logs -f telegram-bot-api"
@@ -81,12 +83,12 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^6.0.5",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
-    "concurrently": "^10.0.5",
+    "concurrently": "^10.0.0",
     "cross-env": "^10.1.0",
     "electron": "^43.4.1",
     "postcss": "^8.5.26",
