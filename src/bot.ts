@@ -21,58 +21,83 @@ const ADMIN_USERNAME = "D1mawik";
 const TEMP_DIR = path.join(process.cwd(), "temp");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-function resolveLocalTelegramFile(filePath: string): string | null {
-  const normalized = filePath.replace(/^[/\\]+/, "");
-  const botId = BOT_TOKEN.split(":")[0];
+function findFileRecursive(rootDir: string, targetBaseName: string): string | null {
+  const queue: string[] = [rootDir];
+  const target = targetBaseName.toLowerCase();
 
-  // Docker on Windows maps the Linux directory name containing the bot token
-  // to a Windows-safe filename (the ':' is transformed). Therefore do not
-  // construct the directory from BOT_TOKEN. Find the actual directory by the
-  // bot id prefix and then append the relative file_path returned by getFile.
-  const candidates: string[] = [
-    path.join(TEMP_DIR, normalized),
-  ];
+  while (queue.length > 0) {
+    const currentDir = queue.shift()!;
+    let entries: fs.Dirent[];
 
-  try {
-    const entries = fs.readdirSync(TEMP_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      if (entry.name === botId || entry.name.startsWith(`${botId}`)) {
-        candidates.push(path.join(TEMP_DIR, entry.name, normalized));
-      }
-    }
-  } catch {
-    // Continue with the direct candidate if the directory cannot be read.
-  }
-
-  for (const candidate of candidates) {
     try {
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-        return path.resolve(candidate);
-      }
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
     } catch {
-      // Ignore inaccessible candidates and continue checking the others.
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+
+      if (entry.isFile() && entry.name.toLowerCase() === target) {
+        return path.resolve(fullPath);
+      }
+
+      if (entry.isDirectory()) {
+        queue.push(fullPath);
+      }
     }
   }
 
   return null;
 }
 
+function resolveLocalTelegramFile(filePath: string): string | null {
+  const normalized = filePath.replace(/^[/\\]+/, "");
+  const targetBaseName = path.basename(normalized);
+
+  // The Linux Bot API stores files under:
+  // /var/lib/telegram-bot-api/<bot-token>/documents/file.MOV
+  // With a Windows bind mount, Docker changes the ':' in the token directory
+  // name. Therefore resolving the directory from BOT_TOKEN is unreliable.
+  // Search the mounted temp directory for the exact filename instead.
+  const directCandidate = path.join(TEMP_DIR, normalized);
+
+  try {
+    if (fs.existsSync(directCandidate) && fs.statSync(directCandidate).isFile()) {
+      return path.resolve(directCandidate);
+    }
+  } catch {
+    // Continue with recursive search.
+  }
+
+  return findFileRecursive(TEMP_DIR, targetBaseName);
+}
+
 async function downloadLocalTelegramFile(filePath: string, destPath: string): Promise<void> {
-  const localPath = resolveLocalTelegramFile(filePath);
+  const maxWaitMs = 15000;
+  const retryDelayMs = 500;
+  const startedAt = Date.now();
+  let localPath: string | null = null;
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    localPath = resolveLocalTelegramFile(filePath);
+    if (localPath) break;
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
 
   if (!localPath) {
-    throw new Error(`Local Telegram file not found in shared storage: ${filePath}`);
+    throw new Error(`Local Telegram file not found in shared storage after ${maxWaitMs}ms: ${filePath}`);
   }
 
   console.log("Using Local Bot API file directly:", localPath);
   fs.copyFileSync(localPath, destPath);
 
-  if (!fs.existsSync(destPath) || fs.statSync(destPath).size === 0) {
+  const size = fs.existsSync(destPath) ? fs.statSync(destPath).size : 0;
+  if (size === 0) {
     throw new Error("Copied Telegram file is empty");
   }
 
-  console.log("Telegram file ready:", destPath, fs.statSync(destPath).size, "bytes");
+  console.log("Telegram file ready:", destPath, size, "bytes");
 }
 
 async function isSubscribed(ctx: any, telegramId: number): Promise<boolean> {
