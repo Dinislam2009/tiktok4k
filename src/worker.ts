@@ -1,9 +1,9 @@
 import "dotenv/config";
 import { Worker } from "bullmq";
-import { redisConnection } from "./queue.js";
+import { redisConnection, videoQueue } from "./queue.js";
 import { PrismaClient } from "@prisma/client";
 import { Bot, InputFile } from "grammy";
-import { completeVideoUsage, refundVideoUsage } from "./credits.js";
+import { completeVideoUsage, refundVideoUsage, recoverStaleVideoUsages } from "./credits.js";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
 import fs from "fs";
@@ -22,6 +22,30 @@ function renderProgressBar(percent: number): string {
   const filledBlocks = Math.round((safePercent / 100) * 10);
   return "█".repeat(filledBlocks) + "░".repeat(10 - filledBlocks);
 }
+
+async function recoverStaleUsages() {
+  try {
+    const jobs = await videoQueue.getJobs(["waiting", "active", "delayed", "prioritized", "paused"]);
+    const protectedUsageRecordIds = new Set<string>();
+
+    for (const job of jobs) {
+      const usageRecordId = job.data?.usageRecordId;
+      if (typeof usageRecordId === "string" && usageRecordId) {
+        protectedUsageRecordIds.add(usageRecordId);
+      }
+    }
+
+    const recovered = await recoverStaleVideoUsages(prisma, 2 * 60 * 60 * 1000, protectedUsageRecordIds);
+    if (recovered > 0) {
+      console.log(`♻️ STALE USAGES RECOVERED: ${recovered} credit(s) refunded`);
+    }
+  } catch (error) {
+    console.error("❌ STALE USAGE RECOVERY ERROR:", error);
+  }
+}
+
+void recoverStaleUsages();
+setInterval(() => void recoverStaleUsages(), 10 * 60 * 1000);
 
 export const worker = new Worker(
   "video-processing",
