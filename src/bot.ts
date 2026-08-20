@@ -222,7 +222,8 @@ bot.hears(["👥 Дос шақыру", "👥 Пригласить друга"], 
   if (!user) return;
   const lang = (user.language as "kk" | "ru") || "kk";
   const referralLink = `https://t.me/${BOT_USERNAME}?start=ref_${user.referralCode}`;
-  await ctx.reply(`${messages[lang].referralText}\n\n🔗 ${referralLink}`, { parse_mode: "Markdown" });
+  const referralText = messages[lang].referralText.replace(/\*\*/g, "");
+  await ctx.reply(`${referralText}\n\n🔗 ${referralLink}`);
 });
 
 bot.hears(["👤 Профиль"], async (ctx) => {
