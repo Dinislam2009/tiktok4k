@@ -19,6 +19,8 @@ model User {
 
   subscriptions Subscription[]
   usageRecords  UsageRecord[]
+  authSessions  AuthSession[]
+  devices       Device[]
 }
 
 model Subscription {
@@ -33,10 +35,38 @@ model Subscription {
   updatedAt DateTime  @updatedAt
 }
 
+model AuthSession {
+  id        String   @id @default(uuid())
+  sessionId String   @unique
+  status    String   @default("PENDING") // PENDING, APPROVED, EXPIRED, authenticated
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Device {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId   String   @unique
+  name       String?
+  platform   String?
+  lastSeenAt DateTime @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  usageRecords UsageRecord[]
+}
+
 model UsageRecord {
   id          String    @id @default(uuid())
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String?
+  device      Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   status      String    @default("RUNNING") // RUNNING, COMPLETED, FAILED
   createdAt   DateTime  @default(now())
   completedAt DateTime?
