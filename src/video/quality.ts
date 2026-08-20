@@ -32,10 +32,11 @@ function getDisplayDimensions(width: number, height: number, rotation: number) {
 
 function getRotationFilter(rotation: number): string {
   const normalizedRotation = ((rotation % 360) + 360) % 360;
-  // FFmpeg's QuickTime display-matrix rotation is expressed in the opposite
-  // direction from the transpose filter numbering used here.
-  if (normalizedRotation === 90) return "transpose=2";
-  if (normalizedRotation === 270) return "transpose=1";
+  // FFmpeg's transpose filter numbering: 1 = clockwise 90°, 2 = counter-clockwise 90°.
+  // The source's QuickTime +90° display rotation must be normalized to the same
+  // portrait orientation as the rendered output, so +90° uses transpose=1.
+  if (normalizedRotation === 90) return "transpose=1";
+  if (normalizedRotation === 270) return "transpose=2";
   if (normalizedRotation === 180) return "hflip,vflip";
   return "null";
 }
