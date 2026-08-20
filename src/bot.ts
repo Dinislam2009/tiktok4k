@@ -7,6 +7,7 @@ import { getCreditBalance, grantPurchasedCredits, grantReferralBonus, refundVide
 import fs from "fs";
 import path from "path";
 import http from "http";
+import https from "https";
 
 const prisma = new PrismaClient();
 const LOCAL_API_URL = process.env.LOCAL_API_URL || "http://127.0.0.1:8081";
@@ -16,8 +17,6 @@ export const bot = new Bot(BOT_TOKEN, {
   client: { apiRoot: LOCAL_API_URL },
 });
 
-// The local Bot API is used for normal bot traffic. File retrieval falls back
-// to Telegram's public Bot API when the local server rejects a file_id.
 const cloudBot = new Bot(BOT_TOKEN);
 
 const CHANNEL_USERNAME = "@tiktokvideo4k";
@@ -28,16 +27,31 @@ if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 function downloadFileStream(url: string, destPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const transport = url.startsWith("https://") ? https : http;
     const file = fs.createWriteStream(destPath);
-    http.get(url, (res) => {
+
+    const request = transport.get(url, (res) => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        file.close();
+        fs.unlink(destPath, () => {});
+        return downloadFileStream(res.headers.location, destPath).then(resolve, reject);
+      }
+
       if (res.statusCode !== 200) {
         file.close();
         fs.unlink(destPath, () => {});
         return reject(new Error(`HTTP Error: ${res.statusCode}`));
       }
+
       res.pipe(file);
-      file.on("finish", () => { file.close(); resolve(); });
-    }).on("error", (err) => {
+      file.on("finish", () => {
+        file.close();
+        resolve();
+      });
+    });
+
+    request.on("error", (err) => {
+      file.close();
       fs.unlink(destPath, () => {});
       reject(err);
     });
@@ -185,30 +199,14 @@ bot.on(["message:document", "message:video"], async (ctx) => {
   const outputPath = path.join(TEMP_DIR, `out_${reserved.usageRecordId}${ext}`);
 
   try {
-    let file;
-    try {
-      file = await ctx.api.getFile(doc.file_id);
-      console.log("Local Bot API getFile succeeded:", file.file_path);
-    } catch (localError) {
-      console.warn("Local Bot API getFile failed; trying public Bot API:", localError);
-      file = await cloudBot.api.getFile(doc.file_id);
-      console.log("Public Bot API getFile succeeded:", file.file_path);
-    }
+    const file = await ctx.api.getFile(doc.file_id);
+    console.log("Local Bot API getFile succeeded:", file.file_path);
 
-    if (!file.file_path) throw new Error("File path error");
+    if (!file.file_path) throw new Error("Local Bot API did not return file_path");
 
-    if (fs.existsSync(file.file_path)) {
-      fs.copyFileSync(file.file_path, inputPath);
-    } else {
-      const fileUrl = `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${file.file_path}`;
-      try {
-        await downloadFileStream(fileUrl, inputPath);
-      } catch (localDownloadError) {
-        console.warn("Local file download failed; trying public Bot API download:", localDownloadError);
-        const cloudFileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-        await downloadFileStream(cloudFileUrl, inputPath);
-      }
-    }
+    const fileUrl = `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${file.file_path}`;
+    console.log("Downloading local Telegram file:", fileUrl.replace(BOT_TOKEN, "<BOT_TOKEN>"));
+    await downloadFileStream(fileUrl, inputPath);
 
     await videoQueue.add("process-video", {
       chatId: ctx.chat.id,
