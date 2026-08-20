@@ -117,6 +117,7 @@ export class FFmpegRenderer {
     const encoder = plan.output.codec === "libx265" ? "libx265" : "libx264";
     const preset = options.preset ?? (options.quality === "quality" ? "veryslow" : "medium");
     const crf = options.crf ?? plan.output.crf;
+    const isHdrH264 = metadata.isHDR && encoder === "libx264" && plan.output.pixelFormat === "yuv420p10le";
 
     const commonArgs = [
       "-hide_banner", "-y", "-i", options.inputPath,
@@ -142,11 +143,14 @@ export class FFmpegRenderer {
         ];
 
     if (options.quality === "quality" && encoder === "libx264") {
+      const videoProfileArgs = isHdrH264
+        ? ["-profile:v", "high10"]
+        : ["-profile:v", "high", "-level:v", "4.1"];
+
       await this.run([
         ...commonArgs,
         ...audioArgs,
-        "-profile:v", "high",
-        "-level:v", "4.1",
+        ...videoProfileArgs,
         "-crf", String(crf),
         "-maxrate", `${plan.output.maxVideoBitrateKbps}k`,
         "-bufsize", `${plan.output.bufferSizeKbps}k`,
