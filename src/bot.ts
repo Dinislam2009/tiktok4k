@@ -3,7 +3,7 @@ import { Bot, InlineKeyboard, Keyboard } from "grammy";
 import { PrismaClient } from "@prisma/client";
 import { messages } from "./locales.js";
 import { videoQueue } from "./queue.js";
-import { getCreditBalance, grantReferralBonus, refundVideoUsage, reserveVideoCredit } from "./credits.js";
+import { getCreditBalance, grantPurchasedCredits, grantReferralBonus, refundVideoUsage, reserveVideoCredit } from "./credits.js";
 import fs from "fs";
 import path from "path";
 import http from "http";
@@ -90,6 +90,22 @@ bot.command("start", async (ctx) => {
   }
 
   await ctx.reply(messages[lang].welcome, { parse_mode: "Markdown", reply_markup: getMainMenu(lang) });
+});
+
+bot.command("grant", async (ctx) => {
+  if (ctx.from?.username?.toLowerCase() !== ADMIN_USERNAME.toLowerCase()) return;
+
+  const [telegramIdText, videosText] = ctx.match.trim().split(/\s+/);
+  const videos = Number(videosText);
+  if (!telegramIdText || ![5, 10, 15].includes(videos)) {
+    return ctx.reply("Формат: /grant <telegramId> <5|10|15>");
+  }
+
+  const user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramIdText) } });
+  if (!user) return ctx.reply("Қолданушы табылмады.");
+
+  const result = await grantPurchasedCredits(prisma, user.id, videos as 5 | 10 | 15);
+  await ctx.reply(`✅ ${videos} ақылы видео қосылды.\nUser: ${telegramIdText}\nPurchase: ${result.purchase.id}`);
 });
 
 bot.hears(["🎬 4K Видео"], async (ctx) => {
