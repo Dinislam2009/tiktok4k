@@ -28,15 +28,9 @@ async function withSerializableRetry<T>(
 
 async function ensureCurrentFreeLot(tx: Prisma.TransactionClient, userId: string, now: Date) {
   const activeFreeLot = await tx.creditLot.findFirst({
-    where: {
-      userId,
-      source: CreditSource.FREE,
-      remaining: { gt: 0 },
-      expiresAt: { gt: now },
-    },
+    where: { userId, source: CreditSource.FREE, remaining: { gt: 0 }, expiresAt: { gt: now } },
     orderBy: { expiresAt: "asc" },
   });
-
   if (activeFreeLot) return activeFreeLot;
 
   const latestFreeLot = await tx.creditLot.findFirst({
@@ -47,23 +41,15 @@ async function ensureCurrentFreeLot(tx: Prisma.TransactionClient, userId: string
   if (!latestFreeLot || !latestFreeLot.expiresAt || latestFreeLot.expiresAt <= now) {
     const expiresAt = new Date(now.getTime() + FREE_WINDOW_MS);
     return tx.creditLot.create({
-      data: {
-        userId,
-        source: CreditSource.FREE,
-        quantity: FREE_CREDITS,
-        remaining: FREE_CREDITS,
-        expiresAt,
-      },
+      data: { userId, source: CreditSource.FREE, quantity: FREE_CREDITS, remaining: FREE_CREDITS, expiresAt },
     });
   }
-
   return null;
 }
 
 export async function reserveVideoCredit(prisma: PrismaClient, userId: string) {
   return withSerializableRetry(prisma, async (tx) => {
     await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() } });
-
     const now = new Date();
     const freeLot = await ensureCurrentFreeLot(tx, userId, now);
 
@@ -79,8 +65,8 @@ export async function reserveVideoCredit(prisma: PrismaClient, userId: string) {
       orderBy: { createdAt: "asc" },
     });
 
+    const priority = (source: CreditSource) => source === CreditSource.FREE ? 0 : source === CreditSource.REFERRAL ? 1 : 2;
     const orderedLots = lots.sort((a, b) => {
-      const priority = (source: CreditSource) => source === CreditSource.FREE ? 0 : source === CreditSource.REFERRAL ? 1 : 2;
       const priorityDiff = priority(a.source) - priority(b.source);
       if (priorityDiff !== 0) return priorityDiff;
       if (a.source === CreditSource.FREE) {
@@ -90,7 +76,6 @@ export async function reserveVideoCredit(prisma: PrismaClient, userId: string) {
     });
 
     if (freeLot && !orderedLots.some((lot) => lot.id === freeLot.id)) orderedLots.unshift(freeLot);
-
     const lot = orderedLots[0];
     if (!lot) return null;
 
@@ -103,19 +88,18 @@ export async function reserveVideoCredit(prisma: PrismaClient, userId: string) {
       data: { userId, creditLotId: updatedLot.id, status: "RUNNING" },
     });
 
-    return {
-      usageRecordId: usageRecord.id,
-      creditLotId: updatedLot.id,
-      source: updatedLot.source,
-      remainingInLot: updatedLot.remaining,
-    };
+    return { usageRecordId: usageRecord.id, creditLotId: updatedLot.id, source: updatedLot.source, remainingInLot: updatedLot.remaining };
   });
 }
 
 export async function completeVideoUsage(prisma: PrismaClient, usageRecordId: string) {
-  return prisma.usageRecord.update({
-    where: { id: usageRecordId },
-    data: { status: "COMPLETED", completedAt: new Date() },
+  return withSerializableRetry(prisma, async (tx) => {
+    const record = await tx.usageRecord.findUnique({ where: { id: usageRecordId } });
+    if (!record || record.status !== "RUNNING") return record;
+    return tx.usageRecord.update({
+      where: { id: usageRecordId },
+      data: { status: "COMPLETED", completedAt: new Date() },
+    });
   });
 }
 
@@ -125,12 +109,8 @@ export async function refundVideoUsage(prisma: PrismaClient, usageRecordId: stri
     if (!record || record.status !== "RUNNING") return record;
 
     if (record.creditLotId) {
-      await tx.creditLot.update({
-        where: { id: record.creditLotId },
-        data: { remaining: { increment: 1 } },
-      });
+      await tx.creditLot.update({ where: { id: record.creditLotId }, data: { remaining: { increment: 1 } } });
     }
-
     return tx.usageRecord.update({ where: { id: usageRecordId }, data: { status: "FAILED" } });
   });
 }
@@ -140,7 +120,6 @@ export async function getCreditBalance(prisma: PrismaClient, userId: string) {
     await tx.user.update({ where: { id: userId }, data: { updatedAt: new Date() } });
     const now = new Date();
     await ensureCurrentFreeLot(tx, userId, now);
-
     const lots = await tx.creditLot.findMany({ where: { userId, remaining: { gt: 0 } } });
     const free = lots.filter((lot) => lot.source === CreditSource.FREE && lot.expiresAt && lot.expiresAt > now).reduce((sum, lot) => sum + lot.remaining, 0);
     const referral = lots.filter((lot) => lot.source === CreditSource.REFERRAL).reduce((sum, lot) => sum + lot.remaining, 0);
@@ -157,24 +136,11 @@ export async function grantReferralBonus(prisma: PrismaClient, referredUserId: s
     return await withSerializableRetry(prisma, async (tx) => {
       const existing = await tx.referral.findUnique({ where: { referredUserId } });
       if (existing) return false;
-
       const referral = await tx.referral.create({
-        data: {
-          referrerId: referrer.id,
-          referredUserId,
-          bonusGranted: true,
-          bonusGrantedAt: new Date(),
-        },
+        data: { referrerId: referrer.id, referredUserId, bonusGranted: true, bonusGrantedAt: new Date() },
       });
-
       await tx.creditLot.create({
-        data: {
-          userId: referrer.id,
-          source: CreditSource.REFERRAL,
-          quantity: 1,
-          remaining: 1,
-          referralId: referral.id,
-        },
+        data: { userId: referrer.id, source: CreditSource.REFERRAL, quantity: 1, remaining: 1, referralId: referral.id },
       });
       return true;
     });
@@ -194,26 +160,11 @@ export async function grantPurchasedCredits(prisma: PrismaClient, userId: string
   const config = PACKAGE_CONFIG[videos];
   return withSerializableRetry(prisma, async (tx) => {
     const purchase = await tx.purchase.create({
-      data: {
-        userId,
-        package: config.package,
-        videos,
-        priceKzt: config.priceKzt,
-        status: PurchaseStatus.PAID,
-        paidAt: new Date(),
-      },
+      data: { userId, package: config.package, videos, priceKzt: config.priceKzt, status: PurchaseStatus.PAID, paidAt: new Date() },
     });
-
     const creditLot = await tx.creditLot.create({
-      data: {
-        userId,
-        source: CreditSource.PURCHASE,
-        quantity: videos,
-        remaining: videos,
-        purchaseId: purchase.id,
-      },
+      data: { userId, source: CreditSource.PURCHASE, quantity: videos, remaining: videos, purchaseId: purchase.id },
     });
-
     return { purchase, creditLot };
   });
 }
