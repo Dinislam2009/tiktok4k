@@ -3,9 +3,9 @@ import { Bot, InlineKeyboard, Keyboard } from "grammy";
 import { PrismaClient } from "@prisma/client";
 import { messages } from "./locales.js";
 import { videoQueue } from "./queue.js";
+import { getCreditBalance, grantReferralBonus, refundVideoUsage, reserveVideoCredit } from "./credits.js";
 import fs from "fs";
 import path from "path";
-import ytDlp from "yt-dlp-exec";
 import http from "http";
 
 const prisma = new PrismaClient();
@@ -16,22 +16,26 @@ export const bot = new Bot(process.env.BOT_TOKEN || "", {
 });
 
 const CHANNEL_USERNAME = "@tiktokvideo4k";
+const BOT_USERNAME = "tiktokvideo4kbot";
 const ADMIN_USERNAME = "D1mawik";
 const TEMP_DIR = path.join(process.cwd(), "temp");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
-
-function escapeMarkdown(text: string): string {
-  return text ? text.replace(/[_*`\[\]]/g, "\\$&") : "";
-}
 
 function downloadFileStream(url: string, destPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(destPath);
     http.get(url, (res) => {
-      if (res.statusCode !== 200) return reject(new Error(`HTTP Error: ${res.statusCode}`));
+      if (res.statusCode !== 200) {
+        file.close();
+        fs.unlink(destPath, () => {});
+        return reject(new Error(`HTTP Error: ${res.statusCode}`));
+      }
       res.pipe(file);
       file.on("finish", () => { file.close(); resolve(); });
-    }).on("error", (err) => { fs.unlink(destPath, () => {}); reject(err); });
+    }).on("error", (err) => {
+      fs.unlink(destPath, () => {});
+      reject(err);
+    });
   });
 }
 
@@ -39,7 +43,7 @@ async function isSubscribed(ctx: any, telegramId: number): Promise<boolean> {
   try {
     const member = await ctx.api.getChatMember(CHANNEL_USERNAME, telegramId);
     return ["creator", "administrator", "member"].includes(member.status);
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -49,7 +53,8 @@ function getMainMenu(lang: "kk" | "ru") {
   return new Keyboard()
     .text(m.video4k).row()
     .text(m.profile).text(m.myLimit).row()
-    .text(m.rules).text(m.buyTariff)
+    .text(m.referral).text(m.buyTariff).row()
+    .text(m.rules)
     .resized();
 }
 
@@ -57,11 +62,19 @@ bot.command("start", async (ctx) => {
   const telegramId = ctx.from?.id;
   if (!telegramId) return;
 
-  let user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
-  if (!user) {
-    user = await prisma.user.create({
-      data: { telegramId: BigInt(telegramId), username: ctx.from?.username || null, language: "kk" },
-    });
+  const existingUser = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
+  const user = existingUser ?? await prisma.user.create({
+    data: { telegramId: BigInt(telegramId), username: ctx.from?.username || null, language: "kk" },
+  });
+
+  if (!existingUser) {
+    const payload = ctx.match.trim();
+    if (payload.startsWith("ref_")) {
+      const granted = await grantReferralBonus(prisma, user.id, payload.slice(4));
+      if (granted) {
+        await ctx.reply("🎁 Referral сілтемеңіз тіркелді! Досыңыз алғаш рет кіргені үшін сізге +1 бонус видео берілді.");
+      }
+    }
   }
 
   const lang = (user.language as "kk" | "ru") || "kk";
@@ -69,7 +82,7 @@ bot.command("start", async (ctx) => {
 
   if (!hasSubscribed) {
     const checkKeyboard = new InlineKeyboard()
-      .url("📢 Каналға өту", `https://t.me/tiktokvideo4k`)
+      .url("📢 Каналға өту", "https://t.me/tiktokvideo4k")
       .row()
       .text(messages[lang].checkSubBtn, "check_subscription");
 
@@ -91,30 +104,37 @@ bot.hears(["📜 Правила"], async (ctx) => {
   await ctx.reply(messages[lang].rulesText, { parse_mode: "Markdown" });
 });
 
-bot.hears(["⭐ Купить тариф"], async (ctx) => {
+bot.hears(["💳 Сатып алу", "💳 Купить"], async (ctx) => {
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
   const lang = (user?.language as "kk" | "ru") || "kk";
-  const buyKeyboard = new InlineKeyboard().url("💬 Төлем жасау", `https://t.me/${ADMIN_USERNAME}`);
+  const buyKeyboard = new InlineKeyboard().url("💬 Админге жазу", `https://t.me/${ADMIN_USERNAME}`);
   await ctx.reply(messages[lang].buyTariffText, { parse_mode: "Markdown", reply_markup: buyKeyboard });
+});
+
+bot.hears(["👥 Дос шақыру", "👥 Пригласить друга"], async (ctx) => {
+  const user = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
+  if (!user) return;
+  const lang = (user.language as "kk" | "ru") || "kk";
+  const referralLink = `https://t.me/${BOT_USERNAME}?start=ref_${user.referralCode}`;
+  await ctx.reply(`${messages[lang].referralText}\n\n🔗 ${referralLink}`, { parse_mode: "Markdown" });
 });
 
 bot.hears(["👤 Профиль"], async (ctx) => {
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
   const lang = (user?.language as "kk" | "ru") || "kk";
-  const text = lang === "kk" ? `👤 **ПРОФИЛЬ**\n\n🆔 ID: \`${ctx.from.id}\`` : `👤 **ПРОФИЛЬ**\n\n🆔 ID: \`${ctx.from.id}\``;
+  if (!user) return;
+  const text = lang === "kk"
+    ? `👤 **ПРОФИЛЬ**\n\n🆔 ID: \`${ctx.from.id}\`\n🔗 Referral коды: \`${user.referralCode}\``
+    : `👤 **ПРОФИЛЬ**\n\n🆔 ID: \`${ctx.from.id}\`\n🔗 Referral код: \`${user.referralCode}\``;
   await ctx.reply(text, { parse_mode: "Markdown" });
 });
 
 bot.hears(["📊 Мой лимит"], async (ctx) => {
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
-  const lang = (user?.language as "kk" | "ru") || "kk";
-  const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const weeklyUsage = await prisma.usageRecord.count({
-    where: { userId: user?.id, createdAt: { gte: oneWeekAgo }, status: { in: ["RUNNING", "COMPLETED"] } },
-  });
-  const freeLeft = Math.max(0, 2 - weeklyUsage);
-  const text = lang === "kk" ? `📊 **БАЛАНС:** **${freeLeft} / 2 видео**` : `📊 **БАЛАНС:** **${freeLeft} / 2 видео**`;
-  await ctx.reply(text, { parse_mode: "Markdown" });
+  if (!user) return;
+  const lang = (user.language as "kk" | "ru") || "kk";
+  const balance = await getCreditBalance(prisma, user.id);
+  await ctx.reply(messages[lang].balanceText(balance.free, balance.referral, balance.purchased, balance.total), { parse_mode: "Markdown" });
 });
 
 bot.on(["message:document", "message:video"], async (ctx) => {
@@ -130,13 +150,18 @@ bot.on(["message:document", "message:video"], async (ctx) => {
 
   const fileName = doc.file_name || "video.mp4";
   const ext = path.extname(fileName).toLowerCase();
-  if (![".mp4", ".mov"].includes(ext)) return;
+  if (![".mp4", ".mov"].includes(ext)) {
+    return ctx.reply(lang === "kk" ? "⚠️ Тек MP4 немесе MOV файл жіберіңіз." : "⚠️ Отправьте файл в формате MP4 или MOV.");
+  }
 
-  const usageRecord = await prisma.usageRecord.create({ data: { userId: user.id, status: "RUNNING" } });
-  const statusMsg = await ctx.reply(lang === "kk" ? "⏳ **Файл кезекке қосылуда...**" : "⏳ **Добавление в очередь...**");
+  const reserved = await reserveVideoCredit(prisma, user.id);
+  if (!reserved) {
+    return ctx.reply(messages[lang].noCredits, { parse_mode: "Markdown" });
+  }
 
-  const inputPath = path.join(TEMP_DIR, `in_${usageRecord.id}${ext}`);
-  const outputPath = path.join(TEMP_DIR, `out_${usageRecord.id}${ext}`);
+  const statusMsg = await ctx.reply(lang === "kk" ? "⏳ **Файл кезекке қосылуда...**" : "⏳ **Добавление в очередь...**", { parse_mode: "Markdown" });
+  const inputPath = path.join(TEMP_DIR, `in_${reserved.usageRecordId}${ext}`);
+  const outputPath = path.join(TEMP_DIR, `out_${reserved.usageRecordId}${ext}`);
 
   try {
     const file = await ctx.api.getFile(doc.file_id);
@@ -149,25 +174,24 @@ bot.on(["message:document", "message:video"], async (ctx) => {
       await downloadFileStream(fileUrl, inputPath);
     }
 
-    // Тапсырманы BullMQ кезегіне қосу
     await videoQueue.add("process-video", {
       chatId: ctx.chat.id,
       statusMsgId: statusMsg.message_id,
-      usageRecordId: usageRecord.id,
+      usageRecordId: reserved.usageRecordId,
       inputPath,
       outputPath,
       fileName,
       lang,
     });
-
   } catch (error) {
     console.error("Queue add error:", error);
-    await prisma.usageRecord.update({ where: { id: usageRecord.id }, data: { status: "FAILED" } });
+    await refundVideoUsage(prisma, reserved.usageRecordId);
+    await ctx.reply(lang === "kk" ? "❌ **Файлды кезекке қосу мүмкін болмады. Видеоңыз балансыңызға қайтарылды.**" : "❌ **Не удалось добавить файл в очередь. Видео возвращено на ваш баланс.**", { parse_mode: "Markdown" });
   }
 });
 
 bot.catch((err) => {
-  console.error(`Bot error:`, err);
+  console.error("Bot error:", err);
 });
 
 console.log("⏳ Бот іске қосылуда...");
