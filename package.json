@@ -17,7 +17,10 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "bot": "tsx src/bot.ts",
-    "worker": "tsx src/worker.ts"
+    "worker": "tsx src/worker.ts",
+    "telegram:up": "docker compose -f docker-compose.telegram.yml up -d",
+    "telegram:down": "docker compose -f docker-compose.telegram.yml down",
+    "telegram:logs": "docker compose -f docker-compose.telegram.yml logs -f telegram-bot-api"
   },
   "build": {
     "appId": "com.dinislam.tiktok4k",
