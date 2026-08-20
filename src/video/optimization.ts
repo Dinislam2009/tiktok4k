@@ -9,6 +9,7 @@ export interface OptimizationRequest {
   target: SocialTarget;
   quality: QualityMode;
   codec?: VideoCodec;
+  /** @deprecated TikTok4K preserves source geometry; framing is no longer used for crop/pad. */
   framing?: FramingMode;
 }
 
@@ -16,13 +17,13 @@ export interface OptimizationPlan {
   target: SocialTarget;
   quality: QualityMode;
   framing: FramingMode;
-  input: Pick<VideoMetadata, "width" | "height" | "fps" | "videoCodec" | "bitrate" | "pixelFormat" | "isHDR" | "duration">;
+  input: Pick<VideoMetadata, "width" | "height" | "fps" | "videoCodec" | "bitrate" | "pixelFormat" | "isHDR" | "duration" | "rotation">;
   output: {
     width: number;
     height: number;
     fps: number;
     codec: VideoCodec;
-    pixelFormat: "yuv420p";
+    pixelFormat: "yuv420p" | "yuv420p10le";
     crf: number;
     minVideoBitrateKbps: number;
     videoBitrateKbps: number;
@@ -32,13 +33,9 @@ export interface OptimizationPlan {
     container: "mp4";
   };
   actions: { scale: boolean; crop: boolean; pad: boolean; reencodeVideo: boolean; reencodeAudio: boolean };
-  filter: string;
+  filter: string | null;
   warnings: string[];
 }
-
-const TARGET_WIDTH = 1080;
-const TARGET_HEIGHT = 1920;
-const TARGET_ASPECT = TARGET_WIDTH / TARGET_HEIGHT;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -68,46 +65,55 @@ function selectEncoding(fps: number, quality: QualityMode, codec: VideoCodec) {
   };
 }
 
-function buildFilter(sourceWidth: number, sourceHeight: number, framing: FramingMode) {
-  const sourceAspect = sourceWidth / sourceHeight;
-  if (Math.abs(sourceAspect - TARGET_ASPECT) <= 0.002) {
-    return {
-      filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:flags=lanczos,setsar=1`,
-      crop: false,
-      pad: false,
-      scale: true,
-    };
+function getDisplayDimensions(metadata: Pick<VideoMetadata, "width" | "height" | "rotation">) {
+  const normalizedRotation = ((metadata.rotation % 360) + 360) % 360;
+  const quarterTurn = normalizedRotation === 90 || normalizedRotation === 270;
+
+  return quarterTurn
+    ? { width: metadata.height, height: metadata.width }
+    : { width: metadata.width, height: metadata.height };
+}
+
+export function validateOptimizationInput(metadata: VideoMetadata): void {
+  const display = getDisplayDimensions(metadata);
+  const shortSide = Math.min(display.width, display.height);
+
+  if (metadata.fps <= 0) {
+    throw new Error("Unable to determine the video's frame rate.");
   }
 
-  if (framing === "crop") {
-    return {
-      filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,crop=${TARGET_WIDTH}:${TARGET_HEIGHT},setsar=1`,
-      crop: true,
-      pad: false,
-      scale: true,
-    };
+  if (metadata.fps < 55) {
+    throw new Error(`This video is ${metadata.fps.toFixed(2)} FPS. TikTok4K accepts videos from 55 FPS (60 FPS class) and above.`);
   }
 
-  return {
-    filter: `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
-    crop: false,
-    pad: true,
-    scale: true,
-  };
+  if (shortSide < 1080) {
+    throw new Error(`This video is ${display.width}×${display.height}. TikTok4K requires at least 1080p resolution.`);
+  }
 }
 
 export function createOptimizationPlan(metadata: VideoMetadata, request: OptimizationRequest): OptimizationPlan {
-  const codec = request.codec ?? "libx264";
-  const framing = request.framing ?? "crop";
-  const fps = metadata.fps > 0 ? Math.min(metadata.fps, 60) : 30;
-  const warnings: string[] = [];
-  const geometry = buildFilter(metadata.width, metadata.height, framing);
-  const encoding = selectEncoding(fps, request.quality, codec);
+  validateOptimizationInput(metadata);
 
-  if (metadata.isHDR) warnings.push("HDR input detected. HDR-to-SDR tone mapping is not enabled yet.");
-  if (metadata.width < TARGET_WIDTH || metadata.height < TARGET_HEIGHT) warnings.push("Source is smaller than the target canvas; upscaling may reduce perceived sharpness.");
-  if (framing === "crop" && geometry.crop) warnings.push("Crop mode is enabled. Parts of the original frame outside the 9:16 area will be removed.");
-  if (framing === "fit" && geometry.pad) warnings.push("Fit mode is enabled. The full frame is preserved with padding where the source aspect ratio differs from 9:16.");
+  const codec = request.codec ?? "libx264";
+  const framing = request.framing ?? "fit";
+  const fps = metadata.fps;
+  const warnings: string[] = [];
+  const display = getDisplayDimensions(metadata);
+  const encoding = selectEncoding(fps, request.quality, codec);
+  const pixelFormat = metadata.isHDR && codec === "libx264" ? "yuv420p10le" : "yuv420p";
+
+  // Source geometry is intentionally preserved. FFmpeg's default autorotation
+  // turns metadata rotation into the displayed orientation before filtering.
+  // No crop, pad, or forced 9:16 canvas is used.
+  const filter: string | null = null;
+
+  if (metadata.isHDR) {
+    warnings.push("HDR input detected. Preserve 10-bit pixel depth; tone-mapping is not applied.");
+  }
+
+  if (metadata.rotation !== 0) {
+    warnings.push(`Source rotation ${metadata.rotation}° will be preserved as displayed orientation; no crop or padding is applied.`);
+  }
 
   return {
     target: request.target,
@@ -122,13 +128,14 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       pixelFormat: metadata.pixelFormat,
       isHDR: metadata.isHDR,
       duration: metadata.duration,
+      rotation: metadata.rotation,
     },
     output: {
-      width: TARGET_WIDTH,
-      height: TARGET_HEIGHT,
+      width: display.width,
+      height: display.height,
       fps,
       codec,
-      pixelFormat: "yuv420p",
+      pixelFormat,
       crf: encoding.crf,
       minVideoBitrateKbps: encoding.minVideoBitrateKbps,
       videoBitrateKbps: encoding.videoBitrateKbps,
@@ -138,13 +145,13 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       container: "mp4",
     },
     actions: {
-      scale: geometry.scale,
-      crop: geometry.crop,
-      pad: geometry.pad,
+      scale: false,
+      crop: false,
+      pad: false,
       reencodeVideo: true,
       reencodeAudio: request.quality !== "quality",
     },
-    filter: geometry.filter,
+    filter,
     warnings,
   };
 }
