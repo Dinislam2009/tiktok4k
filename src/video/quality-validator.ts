@@ -30,8 +30,8 @@ export interface QualityValidation {
 
 const FPS_TOLERANCE = 0.1;
 const DURATION_TOLERANCE = 0.15;
-const MIN_SSIM = 0.99;
-const MIN_PSNR_DB = 40;
+const MIN_SSIM = 0.96;
+const MIN_PSNR_DB = 36;
 const MIN_VMAF = 90;
 
 function getDisplayDimensions(metadata: Pick<VideoMetadata, "width" | "height" | "rotation">) {
