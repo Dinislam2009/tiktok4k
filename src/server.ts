@@ -7,6 +7,7 @@ import { bot } from "./bot.js";
 
 const fastify = Fastify({ logger: true });
 const prisma = new PrismaClient();
+const db = prisma as any;
 
 await fastify.register(cors, { origin: true });
 
@@ -14,7 +15,7 @@ fastify.post("/api/auth/request", async () => {
   const sessionId = randomUUID();
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-  await prisma.authSession.create({
+  await db.authSession.create({
     data: { sessionId, expiresAt },
   });
 
@@ -30,7 +31,7 @@ fastify.post("/api/auth/request", async () => {
 fastify.get("/api/auth/session/:id", async (request, reply) => {
   const { id } = request.params as { id: string };
 
-  const session = await prisma.authSession.findUnique({
+  const session = await db.authSession.findUnique({
     where: { sessionId: id },
     include: { user: true },
   });
@@ -39,7 +40,7 @@ fastify.get("/api/auth/session/:id", async (request, reply) => {
 
   if (session.expiresAt < new Date()) {
     if (session.status === "PENDING") {
-      await prisma.authSession.update({
+      await db.authSession.update({
         where: { sessionId: id },
         data: { status: "EXPIRED" },
       });
@@ -74,7 +75,7 @@ fastify.post("/api/devices/register", async (request, reply) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return reply.status(404).send({ error: "USER_NOT_FOUND" });
 
-  const existingDevice = await prisma.device.findUnique({ where: { deviceId } });
+  const existingDevice = await db.device.findUnique({ where: { deviceId } });
 
   if (existingDevice) {
     if (existingDevice.userId !== userId) {
@@ -82,7 +83,7 @@ fastify.post("/api/devices/register", async (request, reply) => {
     }
     if (existingDevice.revokedAt) return reply.status(403).send({ error: "DEVICE_REVOKED" });
 
-    const device = await prisma.device.update({
+    const device = await db.device.update({
       where: { deviceId },
       data: { lastSeenAt: new Date(), name, platform },
     });
@@ -90,7 +91,7 @@ fastify.post("/api/devices/register", async (request, reply) => {
     return { status: "OK", device };
   }
 
-  const userDevicesCount = await prisma.device.count({
+  const userDevicesCount = await db.device.count({
     where: { userId, revokedAt: null },
   });
 
@@ -101,7 +102,7 @@ fastify.post("/api/devices/register", async (request, reply) => {
     });
   }
 
-  const device = await prisma.device.create({
+  const device = await db.device.create({
     data: {
       userId,
       deviceId,
@@ -136,7 +137,7 @@ fastify.post("/api/usage/record", async (request, reply) => {
     });
   }
 
-  const device = await prisma.device.findUnique({ where: { deviceId } });
+  const device = await db.device.findUnique({ where: { deviceId } });
   if (!device || device.userId !== userId || device.revokedAt) {
     return reply.status(403).send({ error: "INVALID_DEVICE" });
   }
