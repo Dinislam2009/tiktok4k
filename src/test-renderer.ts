@@ -7,10 +7,11 @@ const outputPath = process.argv[3];
 const framing = (process.argv[4] ?? "crop") as FramingMode;
 const quality = (process.argv[5] ?? "balanced") as QualityMode;
 const target = (process.argv[6] ?? "tiktok") as SocialTarget;
+const preset = process.argv[7] ?? "veryslow";
 
 if (!inputPath || !outputPath) {
   console.error(
-    "Usage: npm run render -- <input-video> <output-video> [crop|fit] [quality|balanced|size] [tiktok|instagram_reels]",
+    "Usage: npm run render -- <input-video> <output-video> [crop|fit] [quality|balanced|size] [tiktok|instagram_reels] [preset]",
   );
   process.exit(1);
 }
@@ -45,6 +46,7 @@ async function main() {
         quality,
         framing,
         codec: "libx264",
+        preset,
       },
       (progress) => {
         process.stdout.write(
@@ -57,6 +59,7 @@ async function main() {
     console.log(`Target: ${target}`);
     console.log(`Framing: ${framing}`);
     console.log(`Quality: ${quality}`);
+    console.log(`Preset: ${preset}`);
     console.log(`Rendered: ${result.outputPath}`);
   } catch (error) {
     process.stdout.write("\n");
