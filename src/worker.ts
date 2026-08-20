@@ -28,8 +28,10 @@ export const worker = new Worker(
   async (job) => {
     const { chatId, usageRecordId, inputPath, outputPath, fileName, lang } = job.data;
     let lastEditTime = Date.now();
+    const maxAttempts = Number(job.opts.attempts ?? 1);
+    const isFinalAttempt = job.attemptsMade + 1 >= maxAttempts;
 
-    console.log(`▶️ JOB ACTIVE: ${job.id} | file=${fileName} | usage=${usageRecordId}`);
+    console.log(`▶️ JOB ACTIVE: ${job.id} | attempt=${job.attemptsMade + 1}/${maxAttempts} | file=${fileName} | usage=${usageRecordId}`);
 
     try {
       await new Promise((resolve, reject) => {
@@ -71,13 +73,23 @@ export const worker = new Worker(
       await completeVideoUsage(prisma, usageRecordId);
       console.log(`✅ JOB COMPLETED: ${job.id} | usage=${usageRecordId}`);
 
+      if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
+      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
     } catch (error) {
-      console.error(`❌ JOB FAILED: ${job.id}`, error);
+      console.error(`❌ JOB FAILED: ${job.id} | attempt=${job.attemptsMade + 1}/${maxAttempts}`, error);
+
+      if (!isFinalAttempt) {
+        // Keep the input file so the retry can process the same job again.
+        if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+        throw error;
+      }
+
       try {
         await refundVideoUsage(prisma, usageRecordId);
       } catch (refundError) {
         console.error("Credit refund error:", refundError);
       }
+
       await bot.api.sendMessage(
         chatId,
         lang === "kk"
@@ -85,9 +97,11 @@ export const worker = new Worker(
           : "❌ **Ошибка при обработке. Видео возвращено на ваш баланс.**",
         { parse_mode: "Markdown" },
       ).catch(() => {});
-    } finally {
+
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
       if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+
+      throw error;
     }
   },
   {
