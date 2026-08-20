@@ -77,6 +77,10 @@ export async function calculateMetrics(sourcePath: string, outputPath: string): 
       ffmpegPath,
       [
         "-hide_banner", "-nostdin",
+        // The source contains QuickTime display-rotation metadata. Disable
+        // FFmpeg's automatic rotation so the explicit transpose below is the
+        // only rotation applied to the reference frame.
+        "-noautorotate",
         "-i", sourcePath,
         "-i", outputPath,
         "-filter_complex", filter,
