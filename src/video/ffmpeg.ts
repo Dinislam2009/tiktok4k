@@ -107,10 +107,13 @@ export class FFmpegRenderer {
 
     if (options.quality === "quality" && encoder === "libx264") {
       const videoProfileArgs = isHdrH264 ? ["-profile:v", "high10"] : ["-profile:v", "high", "-level:v", "4.1"];
-      const capArgs = options.maxrateKbps !== undefined
-        ? ["-b:v", String(options.maxrateKbps) + "k", "-maxrate", String(options.maxrateKbps) + "k", "-bufsize", String(Math.round(options.maxrateKbps * 2)) + "k"]
-        : [];
-      await this.run([...commonArgs, ...audioArgs, ...videoProfileArgs, "-crf", String(crf), ...capArgs, "-progress", "pipe:1", "-nostats", options.outputPath], metadata, onProgress);
+      if (options.maxrateKbps !== undefined) {
+        const targetBitrate = String(options.maxrateKbps) + "k";
+        const rateArgs = ["-b:v", targetBitrate, "-minrate", targetBitrate, "-maxrate", targetBitrate, "-bufsize", String(Math.round(options.maxrateKbps * 2)) + "k"];
+        await this.run([...commonArgs, ...audioArgs, ...videoProfileArgs, ...rateArgs, "-progress", "pipe:1", "-nostats", options.outputPath], metadata, onProgress);
+      } else {
+        await this.run([...commonArgs, ...audioArgs, ...videoProfileArgs, "-crf", String(crf), "-progress", "pipe:1", "-nostats", options.outputPath], metadata, onProgress);
+      }
     } else {
       const rateControl = ["-crf", String(crf), "-b:v", String(plan.output.videoBitrateKbps) + "k", "-maxrate", String(plan.output.maxVideoBitrateKbps) + "k", "-bufsize", String(plan.output.bufferSizeKbps) + "k"];
       await this.run([...commonArgs, ...audioArgs, ...rateControl, "-progress", "pipe:1", "-nostats", options.outputPath], metadata, onProgress);
