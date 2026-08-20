@@ -21,63 +21,31 @@ const ADMIN_USERNAME = "D1mawik";
 const TEMP_DIR = path.join(process.cwd(), "temp");
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-/**
- * In Local Bot API mode getFile returns a local file path. With our Docker
- * setup the server's /var/lib/telegram-bot-api is mounted to ./temp, and the
- * server keeps each bot's files inside a bot-token directory. Depending on
- * the server build/version, file_path can be absolute or relative, so try
- * all valid mappings before falling back to the HTTP file endpoint.
- */
-function resolveLocalTelegramFile(filePath: string): string | null {
-  const normalized = filePath.replace(/^[/\\]+/, "");
-  const botId = BOT_TOKEN.split(":")[0];
-
-  const candidates = [
-    filePath,
-    path.join(TEMP_DIR, normalized),
-    path.join(TEMP_DIR, BOT_TOKEN, normalized),
-    path.join(TEMP_DIR, botId, normalized),
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-        return path.resolve(candidate);
-      }
-    } catch {
-      // Ignore inaccessible candidates and continue checking the others.
-    }
-  }
-
-  return null;
+function localApiFileUrl(filePath: string): string {
+  return `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${filePath.replace(/^[/\\]+/, "")}`;
 }
 
 async function downloadLocalTelegramFile(filePath: string, destPath: string): Promise<void> {
-  const localPath = resolveLocalTelegramFile(filePath);
+  const url = localApiFileUrl(filePath);
+  console.log("Downloading local Telegram file:", url.replace(BOT_TOKEN, "<BOT_TOKEN>"));
 
-  if (localPath) {
-    console.log("Using Local Bot API file directly:", localPath);
-    fs.copyFileSync(localPath, destPath);
-  } else {
-    // Some builds expose the local file through the HTTP endpoint even when
-    // getFile returns a relative path. Keep this as a compatibility fallback.
-    const url = `${LOCAL_API_URL}/file/bot${BOT_TOKEN}/${filePath}`;
-    console.log("Local file path not found; trying HTTP download:", url.replace(BOT_TOKEN, "<BOT_TOKEN>"));
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Local Telegram file download failed: HTTP ${response.status}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    fs.writeFileSync(destPath, Buffer.from(arrayBuffer));
+  // The local Bot API exposes getFile metadata, but the /file endpoint may be
+  // unavailable for some local-server builds. In that case, ask the local
+  // server for the file bytes via its API instead of falling back to the cloud
+  // Bot API (which has a much smaller file-size limit).
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Local Telegram file download failed: HTTP ${response.status}`);
   }
+
+  const arrayBuffer = await response.arrayBuffer();
+  fs.writeFileSync(destPath, Buffer.from(arrayBuffer));
 
   if (!fs.existsSync(destPath) || fs.statSync(destPath).size === 0) {
     throw new Error("Downloaded Telegram file is empty");
   }
 
-  console.log("Telegram file ready:", destPath, fs.statSync(destPath).size, "bytes");
+  console.log("Downloaded local Telegram file:", destPath, fs.statSync(destPath).size, "bytes");
 }
 
 async function isSubscribed(ctx: any, telegramId: number): Promise<boolean> {
@@ -226,6 +194,10 @@ bot.on(["message:document", "message:video"], async (ctx) => {
 
     if (!file.file_path) throw new Error("Local Bot API did not return file_path");
 
+    // Local Bot API returns an internal server-side file path. Keep the
+    // returned path for diagnosis, but let the local server perform the file
+    // transfer. Public Bot API is intentionally not used because large files
+    // exceed its download limit.
     await downloadLocalTelegramFile(file.file_path, inputPath);
 
     await videoQueue.add("process-video", {
