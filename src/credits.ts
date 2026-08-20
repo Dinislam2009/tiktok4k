@@ -115,10 +115,18 @@ export async function refundVideoUsage(prisma: PrismaClient, usageRecordId: stri
   });
 }
 
-export async function recoverStaleVideoUsages(prisma: PrismaClient, staleAfterMs = 2 * 60 * 60 * 1000) {
+export async function recoverStaleVideoUsages(
+  prisma: PrismaClient,
+  staleAfterMs = 2 * 60 * 60 * 1000,
+  protectedUsageRecordIds: Set<string> = new Set(),
+) {
   const cutoff = new Date(Date.now() - staleAfterMs);
   const staleRecords = await prisma.usageRecord.findMany({
-    where: { status: "RUNNING", createdAt: { lt: cutoff } },
+    where: {
+      status: "RUNNING",
+      createdAt: { lt: cutoff },
+      ...(protectedUsageRecordIds.size > 0 ? { id: { notIn: [...protectedUsageRecordIds] } } : {}),
+    },
     select: { id: true },
   });
 
