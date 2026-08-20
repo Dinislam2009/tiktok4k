@@ -3,6 +3,7 @@ import { Bot } from "grammy";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
+const db = prisma as any;
 export const bot = new Bot(process.env.BOT_TOKEN || "");
 
 bot.command("start", async (ctx) => {
@@ -11,7 +12,7 @@ bot.command("start", async (ctx) => {
   if (payload && payload.startsWith("auth_")) {
     const sessionId = payload.replace("auth_", "");
 
-    const session = await prisma.authSession.findUnique({
+    const session = await db.authSession.findUnique({
       where: { sessionId },
     });
 
@@ -28,7 +29,7 @@ bot.command("start", async (ctx) => {
       create: { telegramId, username },
     });
 
-    await prisma.authSession.update({
+    await db.authSession.update({
       where: { sessionId },
       data: {
         status: "APPROVED",
