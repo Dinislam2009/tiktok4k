@@ -122,12 +122,13 @@ export class FFmpegRenderer {
       "-hide_banner", "-y", "-i", options.inputPath,
       "-map", "0:v:0", "-map", "0:a:0?",
       "-map_metadata", "0",
-      "-vf", plan.filter,
       "-c:v", encoder,
       "-preset", preset,
       "-r", String(plan.output.fps),
       "-pix_fmt", plan.output.pixelFormat,
     ];
+
+    if (plan.filter) commonArgs.push("-vf", plan.filter);
 
     const audioArgs = options.quality === "quality"
       ? [
