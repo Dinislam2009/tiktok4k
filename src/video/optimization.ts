@@ -23,7 +23,7 @@ export interface OptimizationPlan {
     height: number;
     fps: number;
     codec: VideoCodec;
-    pixelFormat: "yuv420p";
+    pixelFormat: "yuv420p" | "yuv420p10le";
     crf: number;
     minVideoBitrateKbps: number;
     videoBitrateKbps: number;
@@ -100,6 +100,7 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
   const warnings: string[] = [];
   const display = getDisplayDimensions(metadata);
   const encoding = selectEncoding(fps, request.quality, codec);
+  const pixelFormat = metadata.isHDR && codec === "libx264" ? "yuv420p10le" : "yuv420p";
 
   // Source geometry is intentionally preserved. FFmpeg's default autorotation
   // turns metadata rotation into the displayed orientation before filtering.
@@ -107,7 +108,7 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
   const filter: string | null = null;
 
   if (metadata.isHDR) {
-    warnings.push("HDR input detected. HDR encoding policy requires a dedicated benchmark before changing bit depth or tone mapping.");
+    warnings.push("HDR input detected. Preserve 10-bit pixel depth; tone-mapping is not applied.");
   }
 
   if (metadata.rotation !== 0) {
@@ -134,7 +135,7 @@ export function createOptimizationPlan(metadata: VideoMetadata, request: Optimiz
       height: display.height,
       fps,
       codec,
-      pixelFormat: "yuv420p",
+      pixelFormat,
       crf: encoding.crf,
       minVideoBitrateKbps: encoding.minVideoBitrateKbps,
       videoBitrateKbps: encoding.videoBitrateKbps,
