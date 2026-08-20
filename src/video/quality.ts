@@ -76,7 +76,7 @@ export async function calculateMetrics(sourcePath: string, outputPath: string): 
     const proc = spawn(
       ffmpegPath,
       [
-        "-hide_banner", "-nostdin",
+        "-hide_banner", "-nostdin", "-noautorotate",
         "-i", sourcePath,
         "-i", outputPath,
         "-filter_complex", filter,
