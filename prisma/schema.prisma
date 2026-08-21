@@ -30,9 +30,12 @@ model User {
   id             String        @id @default(uuid())
   telegramId     BigInt        @unique
   username       String?
-  language       String        @default("kk") // 'kk' немесе 'ru'
-  bonusLimit     Int           @default(0)    // Legacy field; replaced by credit lots
+  language       String        @default("kk")
+  bonusLimit     Int           @default(0)
   referralCode   String        @unique @default(cuid())
+  isBanned       Boolean       @default(false)
+  banReason      String?
+  bannedAt       DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -42,15 +45,15 @@ model User {
   devices       Device[]
   creditLots    CreditLot[]
   purchases     Purchase[]
-  referralsSent Referral[]      @relation("ReferralSender")
-  referralReceived Referral?    @relation("ReferralReceiver")
+  referralsSent Referral[]     @relation("ReferralSender")
+  referralReceived Referral?   @relation("ReferralReceiver")
 }
 
 model Subscription {
   id        String    @id @default(uuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan      String    @default("free") // Legacy; will be removed after credit migration
+  plan      String    @default("free")
   status    String    @default("active")
   startedAt DateTime  @default(now())
   expiresAt DateTime?
@@ -61,7 +64,7 @@ model Subscription {
 model AuthSession {
   id        String   @id @default(uuid())
   sessionId String   @unique
-  status    String   @default("PENDING") // Legacy desktop auth
+  status    String   @default("PENDING")
   userId    String?
   user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
@@ -145,7 +148,7 @@ model UsageRecord {
   device      Device?    @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   creditLotId String?
   creditLot   CreditLot? @relation(fields: [creditLotId], references: [id], onDelete: SetNull)
-  status      String     @default("RUNNING") // RUNNING, COMPLETED, FAILED
+  status      String     @default("RUNNING")
   createdAt   DateTime   @default(now())
   completedAt DateTime?
 
