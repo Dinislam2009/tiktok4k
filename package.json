@@ -30,11 +30,41 @@
   "build": {
     "appId": "com.dinislam.tiktok4k",
     "productName": "TikTok4K Optimizer",
-    "directories": {"output": "release"},
-    "files": ["dist/**/*", "src/main/preload.cjs"],
-    "extraResources": [{"from": "binaries", "to": "binaries"}],
-    "win": {"target": [{"target": "nsis", "arch": ["x64"]}, {"target": "portable", "arch": ["x64"]}]},
-    "nsis": {"oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true}
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main/preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "binaries",
+        "to": "binaries"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
@@ -57,6 +87,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.0",
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.0",
     "cross-env": "^10.1.0",
