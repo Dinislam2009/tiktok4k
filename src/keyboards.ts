@@ -24,7 +24,15 @@ export function adminCreditKeyboard() {
 }
 
 export function adminUserKeyboard() {
-  return new InlineKeyboard().text("🔎 User іздеу", "admin:user:search").row().text("⬅️ Admin", "admin:back");
+  return new InlineKeyboard()
+    .text("🔎 User іздеу", "admin:user:search").row()
+    .text("🎬 Usage тарихы", "admin:user:history").row()
+    .text("➖ 1 Credit", "admin:user:remove").row()
+    .text("🚫 Ban", "admin:user:ban").text("⬅️ Admin", "admin:back");
+}
+
+export function adminBannedUserKeyboard() {
+  return new InlineKeyboard().text("✅ Unban", "admin:user:unban").row().text("⬅️ Admin", "admin:back");
 }
 
 export function subscribeKeyboard(checkText: string) {
