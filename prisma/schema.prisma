@@ -27,128 +27,123 @@ enum PurchaseStatus {
 }
 
 model User {
-  id             String        @id @default(uuid())
-  telegramId     BigInt        @unique
-  username       String?
-  language       String        @default("kk") // 'kk' немесе 'ru'
-  bonusLimit     Int           @default(0)    // Legacy field; replaced by credit lots
-  referralCode   String        @unique @default(cuid())
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  subscriptions Subscription[]
-  usageRecords  UsageRecord[]
-  authSessions  AuthSession[]
-  devices       Device[]
-  creditLots    CreditLot[]
-  purchases     Purchase[]
-  referralsSent Referral[]      @relation("ReferralSender")
-  referralReceived Referral?    @relation("ReferralReceiver")
+  id                String         @id @default(uuid())
+  telegramId        BigInt         @unique
+  username          String?
+  language          String         @default("kk")
+  bonusLimit        Int            @default(0)
+  referralCode      String         @unique @default(cuid())
+  isBanned          Boolean        @default(false)
+  banReason         String?
+  bannedAt          DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  subscriptions     Subscription[]
+  usageRecords      UsageRecord[]
+  authSessions      AuthSession[]
+  devices           Device[]
+  creditLots        CreditLot[]
+  purchases         Purchase[]
+  referralsSent     Referral[]     @relation("ReferralSender")
+  referralReceived  Referral?      @relation("ReferralReceiver")
 }
 
 model Subscription {
-  id        String    @id @default(uuid())
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan      String    @default("free") // Legacy; will be removed after credit migration
-  status    String    @default("active")
-  startedAt DateTime  @default(now())
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan String @default("free")
+  status String @default("active")
+  startedAt DateTime @default(now())
   expiresAt DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model AuthSession {
-  id        String   @id @default(uuid())
-  sessionId String   @unique
-  status    String   @default("PENDING") // Legacy desktop auth
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id String @id @default(uuid())
+  sessionId String @unique
+  status String @default("PENDING")
+  userId String?
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Device {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceId   String   @unique
-  name       String?
-  platform   String?
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId String @unique
+  name String?
+  platform String?
   lastSeenAt DateTime @default(now())
-  revokedAt  DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   usageRecords UsageRecord[]
 }
 
 model CreditLot {
-  id          String       @id @default(uuid())
-  userId      String
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  source      CreditSource
-  quantity    Int
-  remaining   Int
-  expiresAt   DateTime?
-  purchaseId  String?      @unique
-  purchase    Purchase?    @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
-  referralId  String?      @unique
-  referral    Referral?    @relation(fields: [referralId], references: [id], onDelete: SetNull)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source CreditSource
+  quantity Int
+  remaining Int
+  expiresAt DateTime?
+  purchaseId String? @unique
+  purchase Purchase? @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  referralId String? @unique
+  referral Referral? @relation(fields: [referralId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   usageRecords UsageRecord[]
-
   @@index([userId, source, expiresAt])
   @@index([userId, remaining])
 }
 
 model Purchase {
-  id          String          @id @default(uuid())
-  userId      String
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  package     PurchasePackage
-  videos      Int
-  priceKzt    Int
-  status      PurchaseStatus  @default(PENDING)
-  paidAt      DateTime?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-
-  creditLot   CreditLot?
-
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  package PurchasePackage
+  videos Int
+  priceKzt Int
+  status PurchaseStatus @default(PENDING)
+  paymentProviderId String? @unique
+  paidAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  creditLot CreditLot?
   @@index([userId, status, createdAt])
 }
 
 model Referral {
-  id              String     @id @default(uuid())
-  referrerId      String
-  referrer        User       @relation("ReferralSender", fields: [referrerId], references: [id], onDelete: Cascade)
-  referredUserId  String     @unique
-  referredUser    User       @relation("ReferralReceiver", fields: [referredUserId], references: [id], onDelete: Cascade)
-  bonusGranted    Boolean    @default(false)
-  createdAt       DateTime   @default(now())
-  bonusGrantedAt  DateTime?
-
-  creditLot       CreditLot?
-
+  id String @id @default(uuid())
+  referrerId String
+  referrer User @relation("ReferralSender", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredUserId String @unique
+  referredUser User @relation("ReferralReceiver", fields: [referredUserId], references: [id], onDelete: Cascade)
+  bonusGranted Boolean @default(false)
+  createdAt DateTime @default(now())
+  bonusGrantedAt DateTime?
+  creditLot CreditLot?
   @@index([referrerId, createdAt])
 }
 
 model UsageRecord {
-  id          String     @id @default(uuid())
-  userId      String
-  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceId    String?
-  device      Device?    @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId String?
+  device Device? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   creditLotId String?
-  creditLot   CreditLot? @relation(fields: [creditLotId], references: [id], onDelete: SetNull)
-  status      String     @default("RUNNING") // RUNNING, COMPLETED, FAILED
-  createdAt   DateTime   @default(now())
+  creditLot CreditLot? @relation(fields: [creditLotId], references: [id], onDelete: SetNull)
+  status String @default("RUNNING")
+  createdAt DateTime @default(now())
   completedAt DateTime?
-
   @@index([userId, createdAt])
   @@index([userId, status, createdAt])
   @@index([creditLotId, status])

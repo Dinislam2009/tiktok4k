@@ -13,7 +13,16 @@ RUN apt-get update \
 COPY package*.json ./
 COPY prisma ./prisma/
 
-RUN npm ci
+# ffmpeg-static downloads a platform binary during npm install.
+# GitHub release downloads can occasionally return transient 5xx errors,
+# so retry the complete npm install before failing the Docker build.
+RUN for attempt in 1 2 3; do \
+      echo "npm ci attempt $attempt/3"; \
+      npm ci && exit 0; \
+      if [ "$attempt" -lt 3 ]; then sleep 10; fi; \
+    done; \
+    exit 1
+
 RUN npx prisma generate
 
 COPY . .

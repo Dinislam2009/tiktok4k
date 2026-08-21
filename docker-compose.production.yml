@@ -4,6 +4,11 @@ services:
     container_name: tiktok4k-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - redis-data:/data
     networks:
@@ -60,9 +65,17 @@ services:
       LOCAL_API_URL: http://telegram-bot-api:8081
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     depends_on:
-      - redis
-      - telegram-bot-api
+      redis:
+        condition: service_healthy
+      telegram-bot-api:
+        condition: service_started
     networks:
       - tiktok4k
 
@@ -86,9 +99,12 @@ services:
       - processing-temp:/app/temp
     command: ["npm", "run", "bot"]
     depends_on:
-      - redis
-      - telegram-bot-api
-      - server
+      redis:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+      telegram-bot-api:
+        condition: service_started
     networks:
       - tiktok4k
 
@@ -110,9 +126,38 @@ services:
       - processing-temp:/app/temp
     command: ["npm", "run", "worker"]
     depends_on:
-      - redis
-      - telegram-bot-api
-      - server
+      redis:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+      telegram-bot-api:
+        condition: service_started
+    networks:
+      - tiktok4k
+
+  processing-cleanup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL}
+    container_name: tiktok4k-processing-cleanup
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PROCESSING_TEMP_RETENTION_MS: 86400000
+    volumes:
+      - processing-temp:/app/temp
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        while true; do
+          npm run cleanup:processing;
+          sleep 3600;
+        done
     networks:
       - tiktok4k
 

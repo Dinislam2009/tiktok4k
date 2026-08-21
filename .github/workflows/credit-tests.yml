@@ -32,3 +32,6 @@ jobs:
 
       - name: Run credit lifecycle tests
         run: npx tsx src/credits.test.ts
+
+      - name: Run purchase settlement idempotency test
+        run: npx tsx src/purchase-settlement.test.ts
