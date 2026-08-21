@@ -231,3 +231,5 @@ bot.on(["message:document", "message:video"], async (ctx) => {
 bot.catch((err) => console.error("Bot error:", err));
 console.log("⏳ Бот іске қосылуда...");
 bot.start({ onStart: () => console.log("🤖 TIKTOK HD боты сәтті іске қосылды!") });
+
+registerAdminPanel(bot, prisma);
