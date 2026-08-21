@@ -25,7 +25,7 @@ function renderProgressBar(percent: number): string {
 
 async function recoverStaleUsages() {
   try {
-    const jobs = await videoQueue.getJobs(["waiting", "active", "delayed", "prioritized", "paused"]);
+    const jobs = await videoQueue.getJobs(["waiting", "active", "delayed", "prioritized"]);
     const protectedUsageRecordIds = new Set<string>();
 
     for (const job of jobs) {
