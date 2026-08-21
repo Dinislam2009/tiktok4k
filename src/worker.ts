@@ -87,6 +87,11 @@ export const worker = new Worker(
           .save(outputPath);
       });
 
+      // Mark the usage completed before delivery. This closes the previous
+      // failure window where Telegram delivery succeeded but the DB update
+      // failed, causing the catch block to refund an already-delivered video.
+      await completeVideoUsage(prisma, usageRecordId);
+
       await bot.api.sendDocument(chatId, new InputFile(outputPath, `HD_${fileName}`), {
         caption: lang === "kk"
           ? "🎉 **Видеоңыз TIKTOK HD арқылы сәтті оңтайландырылды!**\n\n📌 *Браузер немесе ПК арқылы жүктеуді ұмытпаңыз.*"
@@ -94,7 +99,6 @@ export const worker = new Worker(
         parse_mode: "Markdown",
       });
 
-      await completeVideoUsage(prisma, usageRecordId);
       console.log(`✅ JOB COMPLETED: ${job.id} | usage=${usageRecordId}`);
 
       if (fs.existsSync(inputPath)) fs.unlinkSync(inputPath);
@@ -109,7 +113,11 @@ export const worker = new Worker(
       }
 
       try {
-        await refundVideoUsage(prisma, usageRecordId);
+        // Only RUNNING usages are refundable. If completion was already
+        // committed, refundVideoUsage safely leaves it completed and prevents
+        // a second credit from being created after a successful delivery.
+        const refunded = await refundVideoUsage(prisma, usageRecordId);
+        console.log(`↩️ FINAL FAILURE SETTLEMENT: usage=${usageRecordId} status=${refunded?.status ?? "UNKNOWN"}`);
       } catch (refundError) {
         console.error("Credit refund error:", refundError);
       }
