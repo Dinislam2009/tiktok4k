@@ -77,6 +77,14 @@ class FakePrisma {
 
   $transaction = async <T>(operation: (tx: any) => Promise<T>) => operation(this.tx);
 
+  usageRecord = {
+    findMany: async ({ where, select }: any) => {
+      const rows = this.usages.filter((row) => this.matches(row, where));
+      if (!select) return rows;
+      return rows.map((row) => ({ id: row.id }));
+    },
+  };
+
   tx = {
     user: {
       update: async ({ where, data }: any) => {
