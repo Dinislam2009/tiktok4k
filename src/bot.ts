@@ -92,11 +92,22 @@ async function getUser(ctx: any) {
   return prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) } });
 }
 
+async function rejectBanned(ctx: any): Promise<boolean> {
+  if (!ctx.from?.id || isAdmin(ctx.from.id)) return false;
+  const user = await prisma.user.findUnique({ where: { telegramId: BigInt(ctx.from.id) }, select: { isBanned: true, banReason: true } });
+  if (!user?.isBanned) return false;
+  await ctx.reply(`🚫 **Сізге ботты пайдалану шектелген.**${user.banReason ? `\n\nСебебі: ${user.banReason}` : ""}`, { parse_mode: "Markdown" });
+  return true;
+}
+
 bot.command("start", async (ctx) => {
   const telegramId = ctx.from?.id;
   if (!telegramId) return;
   const existingUser = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
   const user = existingUser ?? await prisma.user.create({ data: { telegramId: BigInt(telegramId), username: ctx.from?.username || null, language: "kk" } });
+  if (user.isBanned && !isAdmin(telegramId)) {
+    return ctx.reply(`🚫 **Сізге ботты пайдалану шектелген.**${user.banReason ? `\n\nСебебі: ${user.banReason}` : ""}`, { parse_mode: "Markdown" });
+  }
   if (!existingUser) {
     const payload = ctx.match.trim();
     if (payload.startsWith("ref_")) {
@@ -124,18 +135,21 @@ bot.command("grant", async (ctx) => {
 });
 
 bot.hears(["🎬 4K Видео", "🎬 Видео өңдеу", "🎬 Обработать видео"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   const lang = (user?.language as "kk" | "ru") || "kk";
   await ctx.reply(messages[lang].video4kInfo, { parse_mode: "Markdown" });
 });
 
 bot.hears(["📜 Правила", "📖 Қалай қолдану керек", "📖 Как пользоваться"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   const lang = (user?.language as "kk" | "ru") || "kk";
   await ctx.reply(messages[lang].rulesText, { parse_mode: "Markdown" });
 });
 
 bot.hears(["💳 Сатып алу", "💳 Купить", "💳 Пакет сатып алу", "💳 Купить пакет"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   const lang = (user?.language as "kk" | "ru") || "kk";
   const buyKeyboard = new InlineKeyboard().url("💬 Админге жазу", `https://t.me/${ADMIN_USERNAME}`);
@@ -143,6 +157,7 @@ bot.hears(["💳 Сатып алу", "💳 Купить", "💳 Пакет са�
 });
 
 bot.hears(["👥 Дос шақыру", "👥 Пригласить друга"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   if (!user) return;
   const lang = (user.language as "kk" | "ru") || "kk";
@@ -151,6 +166,7 @@ bot.hears(["👥 Дос шақыру", "👥 Пригласить друга"], 
 });
 
 bot.hears(["👤 Профиль"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   if (!user) return;
   const lang = (user.language as "kk" | "ru") || "kk";
@@ -159,6 +175,7 @@ bot.hears(["👤 Профиль"], async (ctx) => {
 });
 
 bot.hears(["📊 Балансым", "📊 Мой баланс", "📊 Мой лимит"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   if (!user) return;
   const lang = (user.language as "kk" | "ru") || "kk";
@@ -167,12 +184,14 @@ bot.hears(["📊 Балансым", "📊 Мой баланс", "📊 Мой л�
 });
 
 bot.hears(["⚙️ Баптаулар", "⚙️ Настройки"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   const lang = (user?.language as "kk" | "ru") || "kk";
   await ctx.reply(lang === "kk" ? "⚙️ **БАПТАУЛАР**\n\nТілді таңдаңыз:" : "⚙️ **НАСТРОЙКИ**\n\nВыберите язык:", { parse_mode: "Markdown", reply_markup: settingsKeyboard(lang) });
 });
 
 bot.hears(["🇰🇿 Қазақша", "🇰🇿 Казахский"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   if (!user) return;
   await prisma.user.update({ where: { id: user.id }, data: { language: "kk" } });
@@ -180,6 +199,7 @@ bot.hears(["🇰🇿 Қазақша", "🇰🇿 Казахский"], async (ctx
 });
 
 bot.hears(["🇷🇺 Орысша", "🇷🇺 Русский"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   if (!user) return;
   await prisma.user.update({ where: { id: user.id }, data: { language: "ru" } });
@@ -187,12 +207,14 @@ bot.hears(["🇷🇺 Орысша", "🇷🇺 Русский"], async (ctx) => {
 });
 
 bot.hears(["⬅️ Артқа", "⬅️ Назад"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const user = await getUser(ctx);
   const lang = (user?.language as "kk" | "ru") || "kk";
   await ctx.reply(lang === "kk" ? "Негізгі меню:" : "Главное меню:", { reply_markup: mainMenu(lang) });
 });
 
 bot.on(["message:document", "message:video"], async (ctx) => {
+  if (await rejectBanned(ctx)) return;
   const telegramId = ctx.from.id;
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(telegramId) } });
   if (!user) return;
@@ -218,9 +240,3 @@ bot.on(["message:document", "message:video"], async (ctx) => {
     await ctx.reply(lang === "kk" ? "❌ **Файлды кезекке қосу мүмкін болмады. Видеоңыз балансыңызға қайтарылды.**" : "❌ **Не удалось добавить файл в очередь. Видео возвращено на ваш баланс.**", { parse_mode: "Markdown" });
   }
 });
-
-registerAdminPanel(bot, prisma);
-
-bot.catch((err) => console.error("Bot error:", err));
-console.log("⏳ Бот іске қосылуда...");
-bot.start({ onStart: () => console.log("🤖 TIKTOK HD боты сәтті іске қосылды!") });
