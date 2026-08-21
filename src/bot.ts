@@ -233,7 +233,7 @@ bot.on(["message:document", "message:video"], async (ctx) => {
     const file = await ctx.api.getFile(doc.file_id);
     if (!file.file_path) throw new Error("Local Bot API did not return file_path");
     await downloadLocalTelegramFile(file.file_path, inputPath);
-    await videoQueue.add("process-video", { chatId: ctx.chat.id, statusMsgId: statusMsg.message_id, usageRecordId: reserved.usageRecordId, inputPath, outputPath, fileName, lang });
+    await videoQueue.add("process-video", { chatId: ctx.chat.id, statusMsgId: statusMsg.message_id, usageRecordId: reserved.usageRecordId, inputPath, outputPath, fileName, lang }, { jobId: `video-${reserved.usageRecordId}` });
   } catch (error) {
     console.error("Queue add error:", error);
     await refundVideoUsage(prisma, reserved.usageRecordId);
