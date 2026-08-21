@@ -56,6 +56,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      REDIS_URL: redis://redis:6379
+      LOCAL_API_URL: http://telegram-bot-api:8081
     ports:
       - "3000:3000"
     depends_on:
@@ -78,6 +80,10 @@ services:
       NODE_ENV: production
       LOCAL_API_URL: http://telegram-bot-api:8081
       REDIS_URL: redis://redis:6379
+      TELEGRAM_SHARED_DIR: /var/lib/telegram-bot-api
+    volumes:
+      - telegram-storage:/var/lib/telegram-bot-api:ro
+      - processing-temp:/app/temp
     command: ["npm", "run", "bot"]
     depends_on:
       - redis
@@ -100,6 +106,8 @@ services:
       NODE_ENV: production
       LOCAL_API_URL: http://telegram-bot-api:8081
       REDIS_URL: redis://redis:6379
+    volumes:
+      - processing-temp:/app/temp
     command: ["npm", "run", "worker"]
     depends_on:
       - redis
@@ -115,3 +123,4 @@ networks:
 volumes:
   redis-data:
   telegram-storage:
+  processing-temp:
