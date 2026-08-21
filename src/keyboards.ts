@@ -8,7 +8,12 @@ export function mainMenu(lang: "kk" | "ru") {
 }
 
 export function settingsKeyboard(lang: "kk" | "ru") {
-  return new Keyboard().text(lang === "kk" ? "🇰🇿 Қазақша" : "🇰🇿 Казахский").text(lang === "kk" ? "🇷🇺 Орысша" : "🇷🇺 Русский").row().text(lang === "kk" ? "🔔 Хабарламалар" : "🔔 Уведомления").text(lang === "kk" ? "⬅️ Артқа" : "⬅️ Назад").resized();
+  return new Keyboard()
+    .text(lang === "kk" ? "🇰🇿 Қазақша" : "🇰🇿 Казахский")
+    .text(lang === "kk" ? "🇷🇺 Орысша" : "🇷🇺 Русский")
+    .row()
+    .text(lang === "kk" ? "⬅️ Артқа" : "⬅️ Назад")
+    .resized();
 }
 
 export function adminMenu() {
