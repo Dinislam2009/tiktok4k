@@ -1,0 +1,17 @@
+node_modules
+.git
+.env
+.env.*
+!.env.example
+temp
+tmp
+dist
+release
+binaries
+benchmark
+*.log
+*.mp4
+*.mov
+*.mkv
+*.avi
+.vscode
