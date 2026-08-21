@@ -23,6 +23,24 @@ function purchaseKeyboard() {
     .text("⬅️ Артқа", "admin:back");
 }
 
+function broadcastAudienceKeyboard() {
+  return new InlineKeyboard()
+    .text("👥 Барлығы", "admin:broadcast:audience:all")
+    .row()
+    .text("🇰🇿 Қазақша", "admin:broadcast:audience:kk")
+    .text("🇷🇺 Русский", "admin:broadcast:audience:ru")
+    .row()
+    .text("❌ Болдырмау", "admin:broadcast:cancel");
+}
+
+function broadcastConfirmKeyboard() {
+  return new InlineKeyboard()
+    .text("🚀 Жіберу", "admin:broadcast:confirm")
+    .text("✏️ Өзгерту", "admin:broadcast:edit")
+    .row()
+    .text("❌ Болдырмау", "admin:broadcast:cancel");
+}
+
 function purchaseStatusLabel(status: PurchaseStatus) {
   if (status === PurchaseStatus.PAID) return "Төленген";
   if (status === PurchaseStatus.CANCELLED) return "Болдырылмаған";
@@ -210,8 +228,73 @@ export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
     await showUser(ctx, prisma, state.userId);
   });
 
+  bot.callbackQuery("admin:broadcast", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    pending.set(ctx.from!.id, { step: "text" });
+    await ctx.answerCallbackQuery();
+    await ctx.reply("📢 *ЖАППАЙ ХАБАРЛАМА*\n\nЖіберілетін мәтінді енгізіңіз:", { parse_mode: "Markdown" });
+  });
+
+  bot.callbackQuery("admin:broadcast:audience:all", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    await selectBroadcastAudience(ctx, prisma, "all");
+  });
+
+  bot.callbackQuery("admin:broadcast:audience:kk", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    await selectBroadcastAudience(ctx, prisma, "kk");
+  });
+
+  bot.callbackQuery("admin:broadcast:audience:ru", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    await selectBroadcastAudience(ctx, prisma, "ru");
+  });
+
+  bot.callbackQuery("admin:broadcast:edit", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    pending.set(ctx.from!.id, { step: "text" });
+    await ctx.answerCallbackQuery();
+    await ctx.reply("✏️ Жаңа мәтінді енгізіңіз:");
+  });
+
+  bot.callbackQuery("admin:broadcast:cancel", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    pending.delete(ctx.from!.id);
+    await ctx.answerCallbackQuery({ text: "Жаппай хабарлама тоқтатылды" });
+    await ctx.reply("❌ Жаппай хабарлама тоқтатылды.");
+  });
+
+  bot.callbackQuery("admin:broadcast:confirm", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
+    const state = pending.get(ctx.from!.id);
+    if (!state?.text || !state.audience) return ctx.answerCallbackQuery({ text: "Белсенді жаппай хабарлама жоқ." });
+
+    pending.delete(ctx.from.id);
+    await ctx.answerCallbackQuery({ text: "Жіберу басталды" });
+
+    const users = await prisma.user.findMany({
+      where: state.audience === "all" ? {} : { language: state.audience },
+      select: { telegramId: true },
+    });
+
+    let sent = 0;
+    let failed = 0;
+    for (const user of users) {
+      try {
+        await ctx.api.sendMessage(user.telegramId.toString(), state.text);
+        sent++;
+      } catch {
+        failed++;
+      }
+      await new Promise(r => setTimeout(r, 60));
+    }
+
+    await ctx.reply(`📊 *ЖАППАЙ ХАБАРЛАМА НӘТИЖЕСІ*\n\n👥 Барлығы: ${users.length}\n✅ Жіберілді: ${sent}\n❌ Жіберілмеді: ${failed}`, { parse_mode: "Markdown" });
+  });
+
   bot.on("message:text", async ctx => {
     if (!isAdmin(ctx.from?.id)) return;
+
     const state = userActions.get(ctx.from.id);
     if (state) {
       if (["search", "credit"].includes(state.action)) {
@@ -232,18 +315,14 @@ export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
 
     const broadcastState = pending.get(ctx.from.id);
     if (!broadcastState) return;
+
     if (broadcastState.step === "text") {
       broadcastState.text = ctx.message.text;
       broadcastState.step = "audience";
-      return ctx.reply("👥 Аудиторияны таңдаңыз: `all`, `kk` немесе `ru`", { parse_mode: "Markdown" });
-    }
-    if (broadcastState.step === "audience") {
-      const audience = ctx.message.text.toLowerCase() as "all" | "kk" | "ru";
-      if (!["all", "kk", "ru"].includes(audience)) return ctx.reply("❌ Тек all, kk немесе ru енгізіңіз.");
-      broadcastState.audience = audience;
-      broadcastState.step = "confirm";
-      const count = audience === "all" ? await prisma.user.count() : await prisma.user.count({ where: { language: audience } });
-      return ctx.reply(`👀 *АЛДЫН АЛА КӨРІНІС*\n\n${broadcastState.text}\n\n👥 Аудитория: ${audience}\n📊 Қолданушылар саны: ${count}\n\n/broadcast_confirm немесе /broadcast_cancel`, { parse_mode: "Markdown" });
+      return ctx.reply("👥 *АУДИТОРИЯНЫ ТАҢДАҢЫЗ*", {
+        parse_mode: "Markdown",
+        reply_markup: broadcastAudienceKeyboard(),
+      });
     }
   });
 
@@ -284,33 +363,6 @@ export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
     await ctx.reply(`📊 *САТЫП АЛУЛАР ҚОРЫТЫНДЫСЫ*\n\n${grouped.join("\n")}`, { parse_mode: "Markdown", reply_markup: purchaseKeyboard() });
   });
 
-  bot.callbackQuery("admin:broadcast", async ctx => {
-    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
-    pending.set(ctx.from!.id, { step: "text" });
-    await ctx.answerCallbackQuery();
-    await ctx.reply("📢 *ЖАППАЙ ХАБАРЛАМА*\n\nЖіберілетін мәтінді енгізіңіз:", { parse_mode: "Markdown" });
-  });
-
-  bot.command("broadcast_cancel", async ctx => {
-    if (!isAdmin(ctx.from?.id)) return;
-    pending.delete(ctx.from.id);
-    await ctx.reply("❌ Жаппай хабарлама тоқтатылды.");
-  });
-
-  bot.command("broadcast_confirm", async ctx => {
-    if (!isAdmin(ctx.from?.id)) return;
-    const state = pending.get(ctx.from.id);
-    if (!state?.text || !state.audience) return ctx.reply("❌ Белсенді жаппай хабарлама жоқ.");
-    pending.delete(ctx.from.id);
-    const users = await prisma.user.findMany({ where: state.audience === "all" ? {} : { language: state.audience }, select: { telegramId: true } });
-    let sent = 0, failed = 0;
-    for (const user of users) {
-      try { await ctx.api.sendMessage(user.telegramId.toString(), state.text); sent++; } catch { failed++; }
-      await new Promise(r => setTimeout(r, 60));
-    }
-    await ctx.reply(`📊 *ЖАППАЙ ХАБАРЛАМА НӘТИЖЕСІ*\n\n👥 Барлығы: ${users.length}\n✅ Жіберілді: ${sent}\n❌ Жіберілмеді: ${failed}`, { parse_mode: "Markdown" });
-  });
-
   bot.callbackQuery("admin:stats", async ctx => {
     if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Қол жеткізуге рұқсат жоқ" });
     const [users, purchases, videos] = await Promise.all([
@@ -333,4 +385,24 @@ export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
     await ctx.answerCallbackQuery();
     await ctx.deleteMessage().catch(() => undefined);
   });
+}
+
+async function selectBroadcastAudience(ctx: any, prisma: PrismaClient, audience: "all" | "kk" | "ru") {
+  const state = pending.get(ctx.from.id);
+  if (!state?.text) return ctx.answerCallbackQuery({ text: "Алдымен хабарлама мәтінін енгізіңіз." });
+
+  state.audience = audience;
+  state.step = "confirm";
+
+  const count = audience === "all"
+    ? await prisma.user.count()
+    : await prisma.user.count({ where: { language: audience } });
+
+  const audienceLabel = audience === "all" ? "Барлығы" : audience === "kk" ? "Қазақша" : "Русский";
+
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    `👀 *АЛДЫН АЛА КӨРІНІС*\n\n${state.text}\n\n👥 Аудитория: ${audienceLabel}\n📊 Қолданушылар саны: ${count}`,
+    { parse_mode: "Markdown", reply_markup: broadcastConfirmKeyboard() }
+  );
 }
