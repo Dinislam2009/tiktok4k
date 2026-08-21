@@ -2,9 +2,9 @@ import { InlineKeyboard, Keyboard } from "grammy";
 
 export function mainMenu(lang: "kk" | "ru") {
   const labels = lang === "kk"
-    ? ["🎬 Видео өңдеу", "📊 Балансым", "👤 Профиль", "👥 Дос шақыру", "💳 Пакет сатып алу", "📖 Қалай қолдану керек", "⚙️ Баптаулар"]
-    : ["🎬 Обработать видео", "📊 Мой баланс", "👤 Профиль", "👥 Пригласить друга", "💳 Купить пакет", "📖 Как пользоваться", "⚙️ Настройки"];
-  return new Keyboard().text(labels[0]).text(labels[1]).row().text(labels[2]).text(labels[3]).row().text(labels[4]).text(labels[5]).row().text(labels[6]).resized();
+    ? ["🎬 Видео өңдеу", "📊 Балансым", "👤 Профиль", "👥 Дос шақыру", "💳 Пакет сатып алу", "📊 Сапаны тексеру", "📖 Қалай қолдану керек", "⚙️ Баптаулар"]
+    : ["🎬 Обработать видео", "📊 Мой баланс", "👤 Профиль", "👥 Пригласить друга", "💳 Купить пакет", "📊 Проверка качества", "📖 Как пользоваться", "⚙️ Настройки"];
+  return new Keyboard().text(labels[0]).text(labels[1]).row().text(labels[2]).text(labels[3]).row().text(labels[4]).text(labels[5]).row().text(labels[6]).text(labels[7]).resized();
 }
 
 export function settingsKeyboard(lang: "kk" | "ru") {
