@@ -6,6 +6,7 @@ import { videoQueue } from "./queue.js";
 import { getCreditBalance, grantPurchasedCredits, grantReferralBonus, refundVideoUsage, reserveVideoCredit } from "./credits.js";
 import { mainMenu, settingsKeyboard } from "./keyboards.js";
 import { registerAdminPanel, isAdmin } from "./admin.js";
+import { registerQualityCheck } from "./quality-check.js";
 import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
@@ -241,6 +242,7 @@ bot.on(["message:document", "message:video"], async (ctx) => {
   }
 });
 
+registerQualityCheck(bot, prisma);
 registerAdminPanel(bot, prisma);
 console.log("⏳ Бот іске қосылуда...");
 bot.start({ onStart: () => console.log("🤖 TIKTOK HD боты сәтті іске қосылды!") });
