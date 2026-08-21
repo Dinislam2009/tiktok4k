@@ -75,10 +75,6 @@ class FakePrisma {
     });
   }
 
-  user = {
-    update: async: any,
-  };
-
   $transaction = async <T>(operation: (tx: any) => Promise<T>) => operation(this.tx);
 
   tx = {
@@ -101,7 +97,6 @@ class FakePrisma {
         return this.order(rows, orderBy);
       },
       create: async ({ data }: any) => {
-        const now = new Date();
         const lot: Lot = {
           id: this.id("lot"),
           userId: data.userId,
@@ -111,7 +106,7 @@ class FakePrisma {
           expiresAt: data.expiresAt ?? null,
           purchaseId: data.purchaseId ?? null,
           referralId: data.referralId ?? null,
-          createdAt: now,
+          createdAt: new Date(),
         };
         this.lots.push(lot);
         return lot;
@@ -126,11 +121,7 @@ class FakePrisma {
     },
     usageRecord: {
       findUnique: async ({ where }: any) => this.usages.find((row) => row.id === where.id) ?? null,
-      findMany: async ({ where, select }: any) => {
-        const rows = this.usages.filter((row) => this.matches(row, where));
-        if (!select) return rows;
-        return rows.map((row) => ({ id: row.id }));
-      },
+      findMany: async ({ where }: any) => this.usages.filter((row) => this.matches(row, where)).map((row) => ({ id: row.id })),
       create: async ({ data }: any) => {
         const usage: Usage = {
           id: this.id("usage"),
