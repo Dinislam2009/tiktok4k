@@ -9,6 +9,8 @@
     "dev:server": "tsx src/server.ts",
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 NODE_OPTIONS=\"--import tsx\" electron src/main/main.ts",
+    "compile": "prisma generate && vite build && tsc",
+    "package": "npm run compile && electron-builder",
     "analyze": "tsx src/test-analyzer.ts",
     "render": "tsx src/test-renderer.ts",
     "quality": "tsx src/test-quality.ts",
@@ -28,11 +30,41 @@
   "build": {
     "appId": "com.dinislam.tiktok4k",
     "productName": "TikTok4K Optimizer",
-    "directories": {"output": "release"},
-    "files": ["dist/**/*", "src/main/preload.cjs"],
-    "extraResources": [{"from": "binaries", "to": "binaries"}],
-    "win": {"target": [{"target": "nsis", "arch": ["x64"]}, {"target": "portable", "arch": ["x64"]}]},
-    "nsis": {"oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true}
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "src/main/preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "binaries",
+        "to": "binaries"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
@@ -53,17 +85,16 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
-    "@tailwindcss/vite": "^4.0.0",
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.0",
     "cross-env": "^10.1.0",
     "electron": "^43.4.1",
     "postcss": "^8.5.26",
-    "prisma": "^6.19.3",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vite": "^8.2.1",
-    "wait-on": "^9.1.0"
+    "wait-on": "^9.1.0",
+    "prisma": "^6.19.3"
   }
 }
