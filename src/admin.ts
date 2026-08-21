@@ -2,16 +2,17 @@ import { InlineKeyboard } from "grammy";
 import type { Bot } from "grammy";
 import { PrismaClient, CreditSource } from "@prisma/client";
 import { grantPurchasedCredits, getCreditBalance } from "./credits.js";
-import { adminCreditKeyboard, adminMenu, adminUserKeyboard } from "./keyboards.js";
+import { adminCreditKeyboard, adminMenu, adminUserKeyboard, adminBannedUserKeyboard } from "./keyboards.js";
 
 const ADMIN_TELEGRAM_IDS = new Set((process.env.ADMIN_TELEGRAM_IDS || "").split(",").map((v) => v.trim()).filter(Boolean));
-const pendingUserActions = new Map<number, { type: "grant" | "remove" | "search"; amount?: number }>();
+const pendingUserActions = new Map<number, { type: "grant" | "remove" | "search" | "ban"; amount?: number }>();
 const selectedUsers = new Map<number, string>();
 
 export function isAdmin(telegramId?: number | bigint) { return telegramId !== undefined && ADMIN_TELEGRAM_IDS.has(String(telegramId)); }
 
 function formatUser(user: any, balance: any) {
-  return `👤 *USER*\n\n🆔 Telegram ID: \`${user.telegramId}\`\n👤 Username: ${user.username ? "@" + user.username : "—"}\n🌐 Language: ${user.language}\n📅 Registered: ${user.createdAt.toISOString()}\n\n💳 *BALANCE*\n🎁 Free: ${balance.free}\n👥 Referral: ${balance.referral}\n💳 Purchased: ${balance.purchased}\n🎬 Total: ${balance.total}`;
+  const status = user.isBanned ? `🚫 BANNED${user.banReason ? ` — ${user.banReason}` : ""}` : "🟢 ACTIVE";
+  return `👤 *USER*\n\n🆔 Telegram ID: \`${user.telegramId}\`\n👤 Username: ${user.username ? "@" + user.username : "—"}\n🌐 Language: ${user.language}\n📅 Registered: ${user.createdAt.toISOString()}\n📌 Status: ${status}${user.bannedAt ? `\n🚫 Banned at: ${user.bannedAt.toISOString()}` : ""}\n\n💳 *BALANCE*\n🎁 Free: ${balance.free}\n👥 Referral: ${balance.referral}\n💳 Purchased: ${balance.purchased}\n🎬 Total: ${balance.total}`;
 }
 
 async function userByTelegramId(prisma: PrismaClient, value: string) { if (!/^\d+$/.test(value)) return null; return prisma.user.findUnique({ where: { telegramId: BigInt(value) } }); }
@@ -21,7 +22,7 @@ async function renderUser(ctx: any, prisma: PrismaClient, userId: string) {
   if (!user) return ctx.reply("❌ Қолданушы табылмады.");
   const balance = await getCreditBalance(prisma, user.id);
   selectedUsers.set(ctx.from.id, user.id);
-  return ctx.reply(formatUser(user, balance), { parse_mode: "Markdown", reply_markup: adminUserKeyboard() });
+  return ctx.reply(formatUser(user, balance), { parse_mode: "Markdown", reply_markup: user.isBanned ? adminBannedUserKeyboard() : adminUserKeyboard() });
 }
 
 export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
@@ -46,6 +47,22 @@ export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
     await ctx.reply(`🎬 *USAGE HISTORY — соңғы 10*\n\n${text}`,{parse_mode:"Markdown",reply_markup:adminUserKeyboard()});
   });
 
+  bot.callbackQuery("admin:user:ban", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Access denied" });
+    const userId = selectedUsers.get(ctx.from!.id); if (!userId) return ctx.answerCallbackQuery({ text: "Алдымен user таңдаңыз" });
+    pendingUserActions.set(ctx.from!.id, { type: "ban" });
+    await ctx.answerCallbackQuery();
+    await ctx.reply("🚫 Ban себебін жазыңыз. Себеп қажет болмаса `—` жіберіңіз:");
+  });
+
+  bot.callbackQuery("admin:user:unban", async ctx => {
+    if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({ text: "Access denied" });
+    const userId = selectedUsers.get(ctx.from!.id); if (!userId) return ctx.answerCallbackQuery({ text: "Алдымен user таңдаңыз" });
+    await prisma.user.update({ where: { id: userId }, data: { isBanned: false, banReason: null, bannedAt: null } });
+    await ctx.answerCallbackQuery({ text: "Unbanned" });
+    await renderUser(ctx, prisma, userId);
+  });
+
   bot.callbackQuery("admin:credits", async ctx => { if (!isAdmin(ctx.from?.id)) return ctx.answerCallbackQuery({text:"Access denied"}); await ctx.answerCallbackQuery(); await ctx.editMessageText("💳 *CREDIT MANAGEMENT*\n\nПакет таңдаңыз, кейін Telegram ID жіберіңіз.", {parse_mode:"Markdown",reply_markup:adminCreditKeyboard()}); });
   for(const amount of [5,10,15] as const) bot.callbackQuery(`admin:grant:${amount}`,async ctx=>{if(!isAdmin(ctx.from?.id))return ctx.answerCallbackQuery({text:"Access denied"});pendingUserActions.set(ctx.from!.id,{type:"grant",amount});await ctx.answerCallbackQuery({text:`${amount} видео таңдалды`});await ctx.reply(`➕ ${amount} видео қосу.\nTelegram ID жіберіңіз:`);});
 
@@ -56,6 +73,7 @@ export function registerAdminPanel(bot: Bot, prisma: PrismaClient) {
     const text=ctx.message.text.trim(); const pending=pendingUserActions.get(ctx.from!.id);
     if(pending?.type==="search"&&/^\d+$/.test(text)){pendingUserActions.delete(ctx.from!.id);const user=await userByTelegramId(prisma,text);if(!user)return ctx.reply("❌ Қолданушы табылмады.");return renderUser(ctx,prisma,user.id);}
     if(pending?.type==="grant"&&/^\d+$/.test(text)){const user=await userByTelegramId(prisma,text);if(!user)return ctx.reply("❌ Қолданушы табылмады.");const result=await grantPurchasedCredits(prisma,user.id,pending.amount as 5|10|15);pendingUserActions.delete(ctx.from!.id);return ctx.reply(`✅ ${pending.amount} credit қосылды.\nUser: ${text}\nPurchase: ${result.purchase.id}`);}
+    if(pending?.type==="ban"){const userId=selectedUsers.get(ctx.from!.id);pendingUserActions.delete(ctx.from!.id);if(!userId)return ctx.reply("❌ User таңдалмаған.");const reason=text==="—"?null:text;await prisma.user.update({where:{id:userId},data:{isBanned:true,banReason:reason,bannedAt:new Date()}});return renderUser(ctx,prisma,userId);}
     if(text.startsWith("/user ")){const user=await userByTelegramId(prisma,text.slice(6).trim());if(!user)return ctx.reply("❌ Қолданушы табылмады.");return renderUser(ctx,prisma,user.id);}
     if(text==="/remove1"&&pending?.type==="remove"){const userId=selectedUsers.get(ctx.from!.id);pendingUserActions.delete(ctx.from!.id);if(!userId)return ctx.reply("❌ User таңдалмаған.");const lot=await prisma.creditLot.findFirst({where:{userId,source:CreditSource.PURCHASE,remaining:{gt:0}},orderBy:{createdAt:"desc"}});if(!lot)return ctx.reply("❌ Purchased credit жоқ.");await prisma.creditLot.update({where:{id:lot.id},data:{remaining:{decrement:1}}});return ctx.reply("✅ 1 purchased credit алынды.");}
   });
