@@ -6,7 +6,12 @@ import { Bot, InputFile } from "grammy";
 import { markVideoProcessing, markVideoDelivering, completeVideoUsage, refundVideoUsage, recoverStaleVideoUsages } from "./credits.js";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegInstaller from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "fs";
+
+const execFileAsync = promisify(execFile);
 
 if (ffmpegInstaller) {
   ffmpeg.setFfmpegPath(ffmpegInstaller);
@@ -21,6 +26,42 @@ function renderProgressBar(percent: number): string {
   const safePercent = isNaN(percent) ? 0 : Math.min(100, Math.max(0, percent));
   const filledBlocks = Math.round((safePercent / 100) * 10);
   return "█".repeat(filledBlocks) + "░".repeat(10 - filledBlocks);
+}
+
+function parseFps(value: unknown): number {
+  if (typeof value !== "string" || !value) return 0;
+  const [num, den] = value.split("/").map(Number);
+  if (Number.isFinite(num) && Number.isFinite(den) && den > 0) return num / den;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function inspectVideo(inputPath: string): Promise<{
+  width: number;
+  height: number;
+  fps: number;
+  hdr: boolean;
+}> {
+  const { stdout } = await execFileAsync(ffprobeStatic.path, [
+    "-v", "error",
+    "-select_streams", "v:0",
+    "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate,color_transfer,color_primaries,color_space",
+    "-of", "json",
+    inputPath,
+  ]);
+
+  const stream = JSON.parse(stdout)?.streams?.[0] ?? {};
+  const fps = parseFps(stream.avg_frame_rate) || parseFps(stream.r_frame_rate);
+  const transfer = String(stream.color_transfer || "").toLowerCase();
+  const primaries = String(stream.color_primaries || "").toLowerCase();
+  const colorSpace = String(stream.color_space || "").toLowerCase();
+
+  return {
+    width: Number(stream.width) || 0,
+    height: Number(stream.height) || 0,
+    fps,
+    hdr: transfer === "smpte2084" || transfer === "arib-std-b67" || primaries === "bt2020" || colorSpace === "bt2020nc",
+  };
 }
 
 async function recoverStaleUsages() {
@@ -58,17 +99,58 @@ export const worker = new Worker(
         return;
       }
 
+      const source = await inspectVideo(inputPath);
+      const sourceFps = source.fps > 0 ? source.fps : 30;
+      const outputFps = Math.min(60, Math.max(23, sourceFps));
+      const fpsLabel = outputFps.toFixed(outputFps % 1 === 0 ? 0 : 2);
+
+      console.log(`🎞 SOURCE: ${source.width}x${source.height} @ ${sourceFps.toFixed(3)} fps | HDR=${source.hdr}`);
+      console.log(`🎯 TIKTOK MASTER: 1080x1920 @ ${fpsLabel} fps | H.264 High | CRF 17 | maxrate 16M`);
+
+      const videoFilters = source.hdr
+        ? [
+            "zscale=transfer=linear:npl=100",
+            "format=gbrpf32le",
+            "tonemap=hable:desat=0",
+            "zscale=primaries=bt709:transfer=bt709:matrix=bt709",
+            "format=yuv420p",
+          ]
+        : [];
+
+      videoFilters.push(
+        "scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos",
+        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black",
+      );
+
       await new Promise((resolve, reject) => {
         ffmpeg(inputPath)
           .outputOptions([
-            "-map 0",
-            "-vf scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,unsharp=5:5:0.8:5:5:0.0",
+            "-map 0:v:0",
+            "-map 0:a:0?",
+            `-vf ${videoFilters.join(",")}`,
             "-c:v libx264",
-            "-crf 18",
             "-preset slow",
+            "-crf 17",
+            "-crf_max 20",
+            "-maxrate 16M",
+            "-bufsize 32M",
+            "-profile:v high",
+            "-level 4.2",
             "-pix_fmt yuv420p",
-            "-c:a copy",
+            `-r ${fpsLabel}`,
+            "-fps_mode cfr",
+            "-g 120",
+            "-keyint_min 60",
+            "-sc_threshold 40",
+            "-aq-mode 2",
+            "-aq-strength 1.0",
+            "-x264-params psy-rd=1.0,0.15:deblock=-1,-1:ref=4",
+            "-c:a aac",
+            "-b:a 192k",
+            "-ar 48000",
+            "-ac 2",
             "-movflags +faststart",
+            "-map_metadata -1",
           ])
           .on("progress", async (progress) => {
             const percent = Math.min(100, Math.max(0, Math.round(progress.percent || 0)));
@@ -76,8 +158,8 @@ export const worker = new Worker(
               lastEditTime = Date.now();
               const bar = renderProgressBar(percent);
               const statusText = lang === "kk"
-                ? `⏳ **Видео сапасы оңтайландырылуда...**\n[${bar}] ${percent}%`
-                : `⏳ **Оптимизация качества видео...**\n[${bar}] ${percent}%`;
+                ? `⏳ **Видео TikTok үшін оңтайландырылуда...**\n[${bar}] ${percent}%\n\n🎯 1080×1920 • ${fpsLabel} FPS • H.264`
+                : `⏳ **Оптимизация видео для TikTok...**\n[${bar}] ${percent}%\n\n🎯 1080×1920 • ${fpsLabel} FPS • H.264`;
               await bot.api.editMessageText(chatId, job.data.statusMsgId, statusText, { parse_mode: "Markdown" }).catch(() => {});
             }
           })
@@ -90,8 +172,8 @@ export const worker = new Worker(
 
       await bot.api.sendDocument(chatId, new InputFile(outputPath, `HD_${fileName}`), {
         caption: lang === "kk"
-          ? "🎉 **Видеоңыз TIKTOK HD арқылы сәтті оңтайландырылды!**\n\n📌 *Браузер немесе ПК арқылы жүктеуді ұмытпаңыз.*"
-          : "🎉 **Ваше видео успешно оптимизировано через TIKTOK HD!**\n\n📌 *Не забудьте загрузить через ПК или Браузер.*",
+          ? "🎉 **Видеоңыз TikTok үшін жоғары сапада оңтайландырылды!**\n\n📌 *TikTok-қа жүктегенде жоғары сапалы жүктеуді қосыңыз.*"
+          : "🎉 **Ваше видео оптимизировано для TikTok в высоком качестве!**\n\n📌 *При загрузке в TikTok включите загрузку в высоком качестве.*",
         parse_mode: "Markdown",
       });
 
