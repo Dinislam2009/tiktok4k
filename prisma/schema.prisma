@@ -8,9 +8,23 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum CreditSource { FREE REFERRAL PURCHASE }
-enum PurchasePackage { STARTER STANDARD PRO }
-enum PurchaseStatus { PENDING PAID CANCELLED }
+enum CreditSource {
+  FREE
+  REFERRAL
+  PURCHASE
+}
+
+enum PurchasePackage {
+  STARTER
+  STANDARD
+  PRO
+}
+
+enum PurchaseStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
 
 model User {
   id                String         @id @default(uuid())
