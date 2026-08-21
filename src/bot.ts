@@ -240,4 +240,7 @@ bot.on(["message:document", "message:video"], async (ctx) => {
     await ctx.reply(lang === "kk" ? "❌ **Файлды кезекке қосу мүмкін болмады. Видеоңыз балансыңызға қайтарылды.**" : "❌ **Не удалось добавить файл в очередь. Видео возвращено на ваш баланс.**", { parse_mode: "Markdown" });
   }
 });
+
 registerAdminPanel(bot, prisma);
+console.log("⏳ Бот іске қосылуда...");
+bot.start({ onStart: () => console.log("🤖 TIKTOK HD боты сәтті іске қосылды!") });
