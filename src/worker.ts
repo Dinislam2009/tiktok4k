@@ -36,22 +36,33 @@ function parseFps(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function sameFps(a: number, b: number): boolean {
+  return a > 0 && b > 0 && Math.abs(a - b) < 0.01;
+}
+
 async function inspectVideo(inputPath: string): Promise<{
   width: number;
   height: number;
   fps: number;
+  avgFps: number;
+  codec: string;
+  format: string;
   hdr: boolean;
+  audioCodec: string;
 }> {
   const { stdout } = await execFileAsync(ffprobeStatic.path, [
     "-v", "error",
-    "-select_streams", "v:0",
-    "-show_entries", "stream=width,height,r_frame_rate,avg_frame_rate,color_transfer,color_primaries,color_space",
+    "-show_entries", "stream=index,codec_type,codec_name,width,height,r_frame_rate,avg_frame_rate,color_transfer,color_primaries,color_space:format=format_name",
     "-of", "json",
     inputPath,
   ]);
 
-  const stream = JSON.parse(stdout)?.streams?.[0] ?? {};
-  const fps = parseFps(stream.avg_frame_rate) || parseFps(stream.r_frame_rate);
+  const probe = JSON.parse(stdout) ?? {};
+  const streams = Array.isArray(probe.streams) ? probe.streams : [];
+  const stream = streams.find((item: any) => item.codec_type === "video") ?? {};
+  const audio = streams.find((item: any) => item.codec_type === "audio") ?? {};
+  const fps = parseFps(stream.r_frame_rate);
+  const avgFps = parseFps(stream.avg_frame_rate);
   const transfer = String(stream.color_transfer || "").toLowerCase();
   const primaries = String(stream.color_primaries || "").toLowerCase();
   const colorSpace = String(stream.color_space || "").toLowerCase();
@@ -60,8 +71,39 @@ async function inspectVideo(inputPath: string): Promise<{
     width: Number(stream.width) || 0,
     height: Number(stream.height) || 0,
     fps,
+    avgFps,
+    codec: String(stream.codec_name || "").toLowerCase(),
+    format: String(probe.format?.format_name || "").toLowerCase(),
     hdr: transfer === "smpte2084" || transfer === "arib-std-b67" || primaries === "bt2020" || colorSpace === "bt2020nc",
+    audioCodec: String(audio.codec_name || "").toLowerCase(),
   };
+}
+
+function isCompatibleSource(source: Awaited<ReturnType<typeof inspectVideo>>): boolean {
+  const videoFps = source.avgFps || source.fps;
+  const mp4Like = source.format.split(",").some((name) => name === "mp4" || name === "mov" || name === "3gp" || name === "3g2");
+  const dimensionsOk = source.width >= 360 && source.height >= 360 && source.width <= 4096 && source.height <= 4096;
+  const fpsOk = videoFps >= 23 && videoFps <= 60;
+  const cfrLike = sameFps(source.fps, source.avgFps);
+
+  return source.codec === "h264" && mp4Like && dimensionsOk && fpsOk && cfrLike && !source.hdr;
+}
+
+async function remuxSource(inputPath: string, outputPath: string): Promise<void> {
+  await new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .outputOptions([
+        "-map 0:v:0",
+        "-map 0:a:0?",
+        "-c copy",
+        "-map_metadata -1",
+        "-movflags +faststart",
+        "-brand isom",
+      ])
+      .on("end", resolve)
+      .on("error", reject)
+      .save(outputPath);
+  });
 }
 
 async function recoverStaleUsages() {
@@ -100,73 +142,86 @@ export const worker = new Worker(
       }
 
       const source = await inspectVideo(inputPath);
-      const sourceFps = source.fps > 0 ? source.fps : 30;
+      const sourceFps = source.avgFps || source.fps || 30;
       const outputFps = Math.min(60, Math.max(23, sourceFps));
       const fpsLabel = outputFps.toFixed(outputFps % 1 === 0 ? 0 : 2);
+      const canPreserveSource = isCompatibleSource(source);
 
-      console.log(`🎞 SOURCE: ${source.width}x${source.height} @ ${sourceFps.toFixed(3)} fps | HDR=${source.hdr}`);
-      console.log(`🎯 TIKTOK MASTER: 1080x1920 @ ${fpsLabel} fps | H.264 High | CRF 17 | maxrate 16M`);
+      console.log(`🎞 SOURCE: ${source.width}x${source.height} @ ${sourceFps.toFixed(3)} fps | codec=${source.codec} | format=${source.format} | HDR=${source.hdr} | CFR=${sameFps(source.fps, source.avgFps)}`);
 
-      const videoFilters = source.hdr
-        ? [
-            "zscale=transfer=linear:npl=100",
-            "format=gbrpf32le",
-            "tonemap=hable:desat=0",
-            "zscale=primaries=bt709:transfer=bt709:matrix=bt709",
-            "format=yuv420p",
-          ]
-        : [];
+      if (canPreserveSource) {
+        console.log("🟢 SOURCE-PRESERVE: compatible H.264 source detected — no video re-encode");
 
-      videoFilters.push(
-        "scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos",
-        "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black",
-      );
+        await remuxSource(inputPath, outputPath);
 
-      await new Promise((resolve, reject) => {
-        ffmpeg(inputPath)
-          .outputOptions([
-            "-map 0:v:0",
-            "-map 0:a:0?",
-            `-vf ${videoFilters.join(",")}`,
-            "-c:v libx264",
-            "-preset slow",
-            "-crf 17",
-            "-crf_max 20",
-            "-maxrate 16M",
-            "-bufsize 32M",
-            "-profile:v high",
-            "-level 4.2",
-            "-pix_fmt yuv420p",
-            `-r ${fpsLabel}`,
-            "-fps_mode cfr",
-            "-g 120",
-            "-keyint_min 60",
-            "-sc_threshold 40",
-            "-aq-mode 2",
-            "-aq-strength 1.0",
-            "-x264-params psy-rd=1.0,0.15:deblock=-1,-1:ref=4",
-            "-c:a aac",
-            "-b:a 192k",
-            "-ar 48000",
-            "-ac 2",
-            "-movflags +faststart",
-            "-map_metadata -1",
-          ])
-          .on("progress", async (progress) => {
-            const percent = Math.min(100, Math.max(0, Math.round(progress.percent || 0)));
-            if (Date.now() - lastEditTime > 3000) {
-              lastEditTime = Date.now();
-              const bar = renderProgressBar(percent);
-              const statusText = lang === "kk"
-                ? `⏳ **Видео TikTok үшін оңтайландырылуда...**\n[${bar}] ${percent}%\n\n🎯 1080×1920 • ${fpsLabel} FPS • H.264`
-                : `⏳ **Оптимизация видео для TikTok...**\n[${bar}] ${percent}%\n\n🎯 1080×1920 • ${fpsLabel} FPS • H.264`;
-              await bot.api.editMessageText(chatId, job.data.statusMsgId, statusText, { parse_mode: "Markdown" }).catch(() => {});
-            }
-          })
-          .on("end", resolve)
-          .on("error", reject)
-          .save(outputPath);
-      });
+        const statusText = lang === "kk"
+          ? `⏳ **Видео дайындалып жатыр...**\n[██████████] 100%\n\n🟢 Түпнұсқа видео қайта кодталмады\n🎯 ${source.width}×${source.height} • ${fpsLabel} FPS • H.264`
+          : `⏳ **Видео дайындалып жатыр...**\n[██████████] 100%\n\n🟢 Исходное видео не перекодировалось\n🎯 ${source.width}×${source.height} • ${fpsLabel} FPS • H.264`;
+        await bot.api.editMessageText(chatId, job.data.statusMsgId, statusText, { parse_mode: "Markdown" }).catch(() => {});
+      } else {
+        console.log(`🎯 SMART ENCODE: 1080x1920 @ ${fpsLabel} fps | H.264 High | CRF 17 | maxrate 16M`);
+
+        const videoFilters = source.hdr
+          ? [
+              "zscale=transfer=linear:npl=100",
+              "format=gbrpf32le",
+              "tonemap=hable:desat=0",
+              "zscale=primaries=bt709:transfer=bt709:matrix=bt709",
+              "format=yuv420p",
+            ]
+          : [];
+
+        videoFilters.push(
+          "scale=1080:1920:force_original_aspect_ratio=decrease:flags=lanczos",
+          "pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black",
+        );
+
+        await new Promise((resolve, reject) => {
+          ffmpeg(inputPath)
+            .outputOptions([
+              "-map 0:v:0",
+              "-map 0:a:0?",
+              `-vf ${videoFilters.join(",")}`,
+              "-c:v libx264",
+              "-preset slow",
+              "-crf 17",
+              "-crf_max 20",
+              "-maxrate 16M",
+              "-bufsize 32M",
+              "-profile:v high",
+              "-level 4.2",
+              "-pix_fmt yuv420p",
+              `-r ${fpsLabel}`,
+              "-fps_mode cfr",
+              "-g 120",
+              "-keyint_min 60",
+              "-sc_threshold 40",
+              "-aq-mode 2",
+              "-aq-strength 1.0",
+              "-x264-params psy-rd=1.0,0.15:deblock=-1,-1:ref=4",
+              "-c:a aac",
+              "-b:a 192k",
+              "-ar 48000",
+              "-ac 2",
+              "-movflags +faststart",
+              "-map_metadata -1",
+            ])
+            .on("progress", async (progress) => {
+              const percent = Math.min(100, Math.max(0, Math.round(progress.percent || 0)));
+              if (Date.now() - lastEditTime > 3000) {
+                lastEditTime = Date.now();
+                const bar = renderProgressBar(percent);
+                const statusText = lang === "kk"
+                  ? `⏳ **Видео TikTok үшін оңтайландырылуда...**\n[${bar}] ${percent}%\n\n🎯 1080×1920 • ${fpsLabel} FPS • H.264`
+                  : `⏳ **Оптимизация видео для TikTok...**\n[${bar}] ${percent}%\n\n🎯 1080×1920 • ${fpsLabel} FPS • H.264`;
+                await bot.api.editMessageText(chatId, job.data.statusMsgId, statusText, { parse_mode: "Markdown" }).catch(() => {});
+              }
+            })
+            .on("end", resolve)
+            .on("error", reject)
+            .save(outputPath);
+        });
+      }
 
       await markVideoDelivering(prisma, usageRecordId);
 
