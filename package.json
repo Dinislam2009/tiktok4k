@@ -9,8 +9,6 @@
     "dev:server": "tsx src/server.ts",
     "dev:vite": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 NODE_OPTIONS=\"--import tsx\" electron src/main/main.ts",
-    "compile": "prisma generate && vite build && tsc",
-    "package": "npm run compile && electron-builder",
     "analyze": "tsx src/test-analyzer.ts",
     "render": "tsx src/test-renderer.ts",
     "quality": "tsx src/test-quality.ts",
@@ -21,6 +19,8 @@
     "worker": "tsx src/worker.ts",
     "cleanup:telegram": "node scripts/cleanup-telegram-storage.cjs",
     "cleanup:telegram:dry": "cross-env TELEGRAM_CLEANUP_DRY_RUN=1 node scripts/cleanup-telegram-storage.cjs",
+    "cleanup:processing": "node scripts/cleanup-processing-temp.cjs",
+    "cleanup:processing:dry": "cross-env PROCESSING_TEMP_CLEANUP_DRY_RUN=1 node scripts/cleanup-processing-temp.cjs",
     "telegram:up": "docker compose -f docker-compose.telegram.yml up -d",
     "telegram:down": "docker compose -f docker-compose.telegram.yml down",
     "telegram:logs": "docker compose -f docker-compose.telegram.yml logs -f telegram-bot-api"
@@ -28,41 +28,11 @@
   "build": {
     "appId": "com.dinislam.tiktok4k",
     "productName": "TikTok4K Optimizer",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "dist/**/*",
-      "src/main/preload.cjs"
-    ],
-    "extraResources": [
-      {
-        "from": "binaries",
-        "to": "binaries"
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+    "directories": {"output": "release"},
+    "files": ["dist/**/*", "src/main/preload.cjs"],
+    "extraResources": [{"from": "binaries", "to": "binaries"}],
+    "win": {"target": [{"target": "nsis", "arch": ["x64"]}, {"target": "portable", "arch": ["x64"]}]},
+    "nsis": {"oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true}
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
@@ -84,7 +54,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.0.0",
-    "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
     "concurrently": "^10.0.0",
     "cross-env": "^10.1.0",
