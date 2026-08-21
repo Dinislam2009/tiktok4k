@@ -14,25 +14,25 @@ export function settingsKeyboard(lang: "kk" | "ru") {
 export function adminMenu() {
   return new InlineKeyboard()
     .text("📊 Статистика", "admin:stats").text("👥 Қолданушылар", "admin:users").row()
-    .text("💳 Credit", "admin:credits").text("📦 Сатып алулар", "admin:purchases").row()
-    .text("🎬 Видео статистикасы", "admin:videos").text("👥 Referral", "admin:referrals").row()
-    .text("📢 Broadcast", "admin:broadcast").text("✖️ Жабу", "admin:close");
+    .text("💳 Видео лимиті", "admin:credits").text("📦 Сатып алулар", "admin:purchases").row()
+    .text("🎬 Видео статистикасы", "admin:videos").text("👥 Достар шақыру", "admin:referrals").row()
+    .text("📢 Жаппай хабарлама", "admin:broadcast").text("✖️ Жабу", "admin:close");
 }
 
 export function adminCreditKeyboard() {
-  return new InlineKeyboard().text("➕ 5 видео", "admin:grant:5").text("➕ 10 видео", "admin:grant:10").row().text("➕ 15 видео", "admin:grant:15").row().text("⬅️ Admin", "admin:back");
+  return new InlineKeyboard().text("➕ 5 видео", "admin:grant:5").text("➕ 10 видео", "admin:grant:10").row().text("➕ 15 видео", "admin:grant:15").row().text("⬅️ Артқа", "admin:back");
 }
 
 export function adminUserKeyboard() {
   return new InlineKeyboard()
-    .text("🔎 User іздеу", "admin:user:search").row()
-    .text("🎬 Usage тарихы", "admin:user:history").row()
-    .text("➖ 1 Credit", "admin:user:remove").row()
-    .text("🚫 Ban", "admin:user:ban").text("⬅️ Admin", "admin:back");
+    .text("🔎 Қолданушыны іздеу", "admin:user:search").row()
+    .text("🎬 Видео тарихы", "admin:user:history").row()
+    .text("➖ 1 видео лимитін алу", "admin:user:remove").row()
+    .text("🚫 Бұғаттау", "admin:user:ban").text("⬅️ Артқа", "admin:back");
 }
 
 export function adminBannedUserKeyboard() {
-  return new InlineKeyboard().text("✅ Unban", "admin:user:unban").row().text("⬅️ Admin", "admin:back");
+  return new InlineKeyboard().text("✅ Бұғаттан шығару", "admin:user:unban").row().text("⬅️ Артқа", "admin:back");
 }
 
 export function subscribeKeyboard(checkText: string) {
